@@ -3632,7 +3632,7 @@ async function loadSongs() {
   S.songs = (await Store.allSongs()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-const APP_VERSION = "202610012217";
+const APP_VERSION = "202610012241";
 function renderLibrary() {
   const list = $("#lib-list");
   const q = ($("#lib-search").value || "").trim().toLowerCase();
@@ -4003,9 +4003,13 @@ function renderLyrics() {
     label.addEventListener("click", () => openLyricsBlockSheet(block));
     const more = el("button", { class: "more-btn", html: ICONS.more, "aria-label": "Optionen" });
     more.addEventListener("click", () => openLyricsBlockSheet(block));
+    trackCaret(ta);
+    const aiBtn = el("button", { class: "ai-btn", "aria-label": "KI-Schreibhilfe", html: '<span>✨</span><span>Hilfe</span>' });
+    aiBtn.addEventListener("pointerdown", (e) => e.preventDefault()); // Cursor im Text behalten
+    aiBtn.addEventListener("click", () => { haptic(); openAiSheet(block, ta); });
 
     const card = el("div", { class: "lyr-block", "data-id": block.id }, [
-      el("div", { class: "lyr-block-head" }, [label, el("span", { class: "lyr-now-badge", text: "Jetzt" }), ...timeBadges, el("span", { class: "flex1" }), more]),
+      el("div", { class: "lyr-block-head" }, [label, el("span", { class: "lyr-now-badge", text: "Jetzt" }), ...timeBadges, el("span", { class: "flex1" }), aiBtn, more]),
       ta,
       foot,
     ]);
@@ -4292,6 +4296,283 @@ function toggleRow(label, sub, value, onChange) {
     onChange(value);
   });
   return el("div", { class: "toggle-row" }, [el("div", {}, [label, sub ? el("small", { text: sub }) : null]), sw]);
+}
+
+/* ===================== KI-SCHREIBHILFE (Google Gemini) =====================
+   Der Schlüssel bleibt nur auf diesem Gerät (localStorage), nie im Code/GitHub.
+   Gemini erkennt die Sprache der Lyrics selbst und antwortet in derselben Sprache. */
+const AI_KEY_STORE = "fc2_gemini_key";
+const AI_FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash"];
+const AI_BASE = "https://generativelanguage.googleapis.com/v1beta";
+function aiKey() { try { return localStorage.getItem(AI_KEY_STORE) || ""; } catch { return ""; } }
+function setAiKey(k) { try { if (k) localStorage.setItem(AI_KEY_STORE, k); else localStorage.removeItem(AI_KEY_STORE); } catch {} }
+
+function aiErr(status, detail) {
+  let msg = "Etwas ist schiefgelaufen. Versuch es nochmal.";
+  const d = String(detail || "");
+  if (status === "nokey") msg = "Noch kein Gemini-Schlüssel eingegeben.";
+  else if (status === "net") msg = "Keine Verbindung zu Gemini. Bist du online?";
+  else if (status === 429) msg = "Gratis-Limit erreicht. Warte eine Minute (oder bis morgen) und versuch es dann nochmal.";
+  else if (status === 400 && /api key/i.test(d)) msg = "Der Schlüssel ist ungültig. Prüfe ihn unter ••• › KI-Hilfe.";
+  else if (status === 401 || status === 403) msg = "Der Schlüssel hat keinen Zugriff. Prüfe ihn unter ••• › KI-Hilfe.";
+  else if (status >= 500) msg = "Gemini ist gerade überlastet. Versuch es gleich nochmal.";
+  else if (status === "parse") msg = "Gemini hat komisch geantwortet. Versuch es nochmal.";
+  const e = new Error(msg); e.aiStatus = status; e.detail = d; return e;
+}
+async function aiFetch(url, opts) {
+  try { return await fetch(url, opts); } catch (e) { throw aiErr("net", e && e.message); }
+}
+async function aiPickModel(key, force) {
+  if (Settings.aiModel && !force) return Settings.aiModel;
+  const r = await aiFetch(`${AI_BASE}/models?pageSize=200`, { headers: { "x-goog-api-key": key } });
+  if (!r.ok) throw aiErr(r.status, await r.text());
+  const d = await r.json();
+  const names = (d.models || [])
+    .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m) => String(m.name || "").replace(/^models\//, ""));
+  const ver = (n) => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
+  const flash = names.filter((n) => /^gemini-\d+(\.\d+)?-flash$/.test(n)).sort((a, b) => ver(b) - ver(a));
+  const pick = flash[0]
+    || names.filter((n) => /flash/.test(n) && !/(tts|live|image|audio|transcribe|lite|embedding)/.test(n)).sort((a, b) => ver(b) - ver(a))[0]
+    || AI_FALLBACK_MODELS[0];
+  Settings.aiModel = pick; saveSettings();
+  return pick;
+}
+function aiParseJson(txt) {
+  let t = String(txt || "").trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if (a >= 0 && b > a) t = t.slice(a, b + 1);
+  try { return JSON.parse(t); } catch { throw aiErr("parse", txt); }
+}
+async function aiCall(system, user) {
+  const key = aiKey();
+  if (!key) throw aiErr("nokey");
+  let model = await aiPickModel(key);
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: user }] }],
+    generationConfig: { temperature: 1, responseMimeType: "application/json" },
+  });
+  const go = (m) => aiFetch(`${AI_BASE}/models/${m}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body });
+  let r = await go(model);
+  if (r.status === 404) {
+    // Modell gibt es nicht mehr → neu wählen
+    try { model = await aiPickModel(key, true); r = await go(model); } catch {}
+    for (const m of AI_FALLBACK_MODELS) { if (r.status !== 404) break; r = await go(m); if (r.ok) { Settings.aiModel = m; saveSettings(); } }
+  }
+  if (!r.ok) throw aiErr(r.status, await r.text());
+  const d = await r.json();
+  const cand = (d.candidates || [])[0];
+  const txt = cand && cand.content && cand.content.parts ? cand.content.parts.map((p) => p.text || "").join("") : "";
+  if (!txt) throw aiErr("parse", JSON.stringify(d).slice(0, 300));
+  return aiParseJson(txt);
+}
+
+const AI_SYSTEM = `Du bist ein erfahrener Co-Writer für Rap- und Song-Lyrics.
+- Erkenne die Sprache bzw. den Dialekt der Lyrics selbst (z. B. Deutsch, Schweizerdeutsch, Englisch, Albanisch, Türkisch, Mischungen) und schreibe deine Vorschläge IMMER in genau dieser Sprache, diesem Dialekt und Slang-Niveau.
+- Behalte Stil, Perspektive, Thema und Flow des Künstlers. Klinge natürlich, nicht nach KI. Keine Klischees.
+- Achte auf Silbenzahl, Reimschema und Mehrfachreime (Multis), wie im Rap üblich.
+- Keine Erklärungen, keine Nummerierung, keine Anführungszeichen um Zeilen.
+- Antworte NUR mit gültigem JSON im verlangten Format.`;
+
+function aiContext(block, lineIdx) {
+  const s = S.song;
+  const lines = block.text.split("\n");
+  const marked = lines.map((l, i) => (i === lineIdx ? `>>> ${l}` : l)).join("\n");
+  const others = s.lyrics.filter((b) => b !== block && b.text.trim()).map((b) => `[${b.label}]\n${b.text.trim()}`).join("\n\n").slice(0, 1200);
+  return `Song: „${s.name}“${s.bpm ? ` · ${s.bpm} BPM` : ""}${s.key ? ` · Tonart ${s.key}` : ""}
+Aktueller Teil: [${block.label}] (die Zeile mit >>> ist gemeint)
+${marked}
+${others ? `\nAndere Teile des Songs (nur als Kontext):\n${others}` : ""}`;
+}
+
+/* Merkt sich, wo der Cursor in welchem Lyrics-Feld war */
+function trackCaret(ta) {
+  const upd = () => { ta._caret = ta.selectionStart; AIState.ta = ta; };
+  ["keyup", "click", "input", "select", "focus"].forEach((ev) => ta.addEventListener(ev, upd));
+  ta.addEventListener("blur", () => { ta._caret = ta.selectionStart; });
+}
+const AIState = { ta: null };
+function lineIndexAt(text, pos) { return text.slice(0, Math.max(0, pos)).split("\n").length - 1; }
+
+function openAiSheet(block, ta) {
+  if (!aiKey()) { openAiSetup(() => openAiSheet(block, ta)); return; }
+  const lines = () => block.text.split("\n");
+  let caret = ta && typeof ta._caret === "number" ? ta._caret : block.text.length;
+  let idx = lineIndexAt(block.text, caret);
+  // Leere Zeile → auf die letzte Zeile mit Text davor beziehen
+  const L0 = lines();
+  if (!(L0[idx] || "").trim()) { let j = idx; while (j > 0 && !(L0[j] || "").trim()) j--; if ((L0[j] || "").trim()) idx = j; }
+  const syl = (t) => countSyllables(t);
+
+  openSheet((root) => {
+    sheetHeader(root, "✨ Schreibhilfe", "");
+    const lineRow = el("div", { class: "ai-lines" });
+    const drawLines = () => {
+      lineRow.innerHTML = "";
+      const L = lines();
+      L.forEach((l, i) => {
+        if (!l.trim()) return;
+        const b = el("button", { class: "ai-line" + (i === idx ? " sel" : "") }, [el("span", { text: l }), el("small", { text: `${syl(l)} Silben` })]);
+        b.addEventListener("click", () => { idx = i; haptic(); drawLines(); });
+        lineRow.appendChild(b);
+      });
+      if (!lineRow.children.length) lineRow.appendChild(el("p", { class: "sheet-sub", text: `Noch kein Text in „${block.label}“. Schreib eine Zeile oder einen Wunsch unten.` }));
+      const sel = lineRow.querySelector(".sel"); if (sel) setTimeout(() => sel.scrollIntoView({ block: "nearest", inline: "center" }), 30);
+    };
+    drawLines();
+    root.appendChild(lineRow);
+
+    const acts = el("div", { class: "ai-acts" });
+    const mk = (icon, label, fn) => { const b = el("button", { html: `<span class="ai-ico">${icon}</span><span>${label}</span>` }); b.addEventListener("click", fn); acts.appendChild(b); return b; };
+    root.appendChild(acts);
+    const wishRow = el("div", { class: "ai-wish" });
+    const wish = el("input", { class: "sheet-input", type: "text", placeholder: "Eigener Wunsch, z. B. „mehr Punchline“", autocomplete: "off" });
+    const wishGo = el("button", { class: "ai-go", "aria-label": "Senden", html: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>' });
+    wishRow.append(wish, wishGo);
+    root.appendChild(wishRow);
+    const out = el("div", { class: "ai-out" });
+    root.appendChild(out);
+    sheetCancel(root, "Schliessen");
+
+    const cur = () => lines()[idx] || "";
+    const insertLine = (text, mode) => {
+      const L = lines();
+      if (mode === "replace" && L[idx] != null && L[idx].trim()) L[idx] = text;
+      else { L.splice(idx + 1, 0, text); idx = idx + 1; }
+      applyText(L.join("\n"));
+      toast(mode === "replace" ? "Zeile ersetzt" : "Zeile eingefügt");
+    };
+    const insertWord = async (w) => {
+      // Reime sind zum Nachschlagen: tippen = kopieren (zum Einfügen beim Schreiben)
+      try { await navigator.clipboard.writeText(w); toast(`„${w}“ kopiert`); }
+      catch { toast(w); }
+    };
+    const applyText = (t) => {
+      block.text = t;
+      if (ta) { ta.value = t; autosize(ta); ta.dispatchEvent(new Event("input")); }
+      else { saveSong(); renderLyrics(); }
+      drawLines();
+    };
+
+    let busy = false;
+    const run = async (label, prompt, render) => {
+      if (busy) return; busy = true;
+      out.innerHTML = "";
+      out.appendChild(el("div", { class: "ai-wait" }, [el("span", { class: "ai-spin" }), el("span", { text: `${label} …` })]));
+      try {
+        const res = await aiCall(AI_SYSTEM, prompt);
+        out.innerHTML = "";
+        if (res.language) out.appendChild(el("div", { class: "ai-lang", text: `Erkannte Sprache: ${res.language}` }));
+        render(res);
+      } catch (e) {
+        out.innerHTML = "";
+        out.appendChild(el("div", { class: "ai-err", text: e.message || String(e) }));
+        if (e.aiStatus === 400 || e.aiStatus === 401 || e.aiStatus === 403) {
+          const fix = el("button", { class: "pill-btn ghost", text: "Schlüssel ändern" });
+          fix.addEventListener("click", () => openAiSetup(() => openAiSheet(block, ta)));
+          out.appendChild(fix);
+        }
+      }
+      busy = false;
+    };
+    const chips = (title, arr, onPick) => {
+      if (!arr || !arr.length) return;
+      out.appendChild(el("div", { class: "ai-sec", text: title }));
+      const box = el("div", { class: "ai-chips" });
+      arr.slice(0, 16).forEach((w) => { const b = el("button", { text: String(w) }); b.addEventListener("click", () => { haptic(); onPick(String(w)); b.classList.add("used"); }); box.appendChild(b); });
+      out.appendChild(box);
+    };
+    const lineCards = (title, arr, mode) => {
+      if (!arr || !arr.length) { out.appendChild(el("div", { class: "ai-err", text: "Keine Vorschläge bekommen. Nochmal versuchen?" })); return; }
+      out.appendChild(el("div", { class: "ai-sec", text: title }));
+      arr.slice(0, 6).forEach((l) => {
+        const b = el("button", { class: "ai-card" }, [el("span", { text: String(l) }), el("small", { text: `${syl(String(l))} Silben · ${mode === "replace" ? "tippen = ersetzen" : "tippen = einfügen"}` })]);
+        b.addEventListener("click", () => { haptic(); insertLine(String(l), mode); b.classList.add("used"); });
+        out.appendChild(b);
+      });
+    };
+
+    mk("⟡", "Reime", () => {
+      const line = cur().trim();
+      if (!line) { toast("Wähle zuerst eine Zeile mit Text"); return; }
+      const lastWord = (line.match(/([\p{L}'’-]+)[^\p{L}]*$/u) || [])[1] || line;
+      run("Gemini sucht Reime", `${aiContext(block, idx)}
+
+Aufgabe: Finde Reime auf das Ende der markierten Zeile („${lastWord}“ bzw. die letzten Silben „${line.split(/\s+/).slice(-3).join(" ")}“).
+JSON-Format: {"language":"<erkannte Sprache/Dialekt, auf Deutsch benannt>","rhymes":["14 einzelne Reimwörter in derselben Sprache, gute zuerst"],"multis":["6 Mehrsilben-Reime aus 2–4 Wörtern, die auf die letzten Silben passen"]}`,
+      (res) => { chips("Mehrsilben-Reime", res.multis, insertWord); chips("Reime", res.rhymes, insertWord); out.appendChild(el("p", { class: "ai-tip", text: "Tippen = kopieren. Für fertige Zeilen nimm „Nächste Zeile“." })); });
+    });
+    mk("↵", "Nächste Zeile", () => {
+      const line = cur();
+      run("Gemini schreibt weiter", `${aiContext(block, idx)}
+
+Aufgabe: Schreibe 4 verschiedene Vorschläge für die Zeile, die DIREKT NACH der markierten Zeile kommt. Führe Inhalt und Reimschema fort (meist Paarreim mit der markierten Zeile), ähnliche Silbenzahl (ca. ${Math.max(6, syl(line) || 10)} Silben).
+JSON-Format: {"language":"<erkannte Sprache/Dialekt, auf Deutsch benannt>","lines":["…","…","…","…"]}`,
+      (res) => lineCards("Vorschläge für die nächste Zeile", res.lines, "insert"));
+    });
+    mk("↻", "Umschreiben", () => {
+      const line = cur().trim();
+      if (!line) { toast("Wähle zuerst eine Zeile mit Text"); return; }
+      run("Gemini schreibt um", `${aiContext(block, idx)}
+
+Aufgabe: Schreibe die markierte Zeile 4× neu: gleiche Aussage, aber stärkere Bilder, Wortspiele oder Punchline. Behalte das Reimwort am Ende möglichst bei, damit das Reimschema hält. Ca. ${syl(line)} Silben.
+JSON-Format: {"language":"<erkannte Sprache/Dialekt, auf Deutsch benannt>","lines":["…","…","…","…"]}`,
+      (res) => lineCards("Neue Versionen der Zeile", res.lines, "replace"));
+    });
+    const doWish = () => {
+      const w = wish.value.trim();
+      if (!w) { wish.focus(); return; }
+      wish.blur();
+      run("Gemini arbeitet", `${aiContext(block, idx)}
+
+Wunsch des Künstlers: „${w}“
+Aufgabe: Erfülle den Wunsch bezogen auf die markierte Zeile bzw. diesen Teil. Gib 4 fertige Zeilen zurück, die man direkt einfügen kann.
+JSON-Format: {"language":"<erkannte Sprache/Dialekt, auf Deutsch benannt>","lines":["…","…","…","…"]}`,
+      (res) => lineCards("Vorschläge", res.lines, "insert"));
+    };
+    wishGo.addEventListener("click", doWish);
+    wish.addEventListener("keydown", (e) => { if (e.key === "Enter") doWish(); });
+  });
+}
+
+function openAiSetup(then) {
+  openSheet((root) => {
+    sheetHeader(root, "✨ KI-Hilfe einrichten", "Die Schreibhilfe nutzt Google Gemini (gratis). Sie erkennt die Sprache deiner Lyrics selbst.");
+    root.appendChild(el("ol", { class: "ai-steps" }, [
+      el("li", { html: 'Öffne <b>aistudio.google.com</b> und melde dich mit Google an.' }),
+      el("li", { html: 'Tippe auf <b>„Get API key“</b> › <b>„Create API key“</b>.' }),
+      el("li", { html: 'Schlüssel kopieren und hier einfügen.' }),
+    ]));
+    const inp = el("input", { class: "sheet-input", type: "password", placeholder: "Gemini-Schlüssel einfügen", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    inp.value = aiKey();
+    root.appendChild(inp);
+    const status = el("p", { class: "ai-status" });
+    root.appendChild(status);
+    root.appendChild(el("p", { class: "ai-tip", text: "Der Schlüssel bleibt nur auf diesem Gerät. Hinweis: Beim Gratis-Angebot darf Google deine Texte zur Verbesserung seiner KI nutzen." }));
+    const ok = el("button", { class: "primary", text: "Speichern & testen" });
+    const cancel = el("button", { text: aiKey() ? "Schlüssel löschen" : "Abbrechen" });
+    cancel.addEventListener("click", () => {
+      if (aiKey()) { setAiKey(""); Settings.aiModel = ""; saveSettings(); toast("Schlüssel gelöscht"); }
+      closeSheet(null);
+    });
+    ok.addEventListener("click", async () => {
+      const k = inp.value.trim().replace(/\s+/g, "");
+      if (!k) { inp.focus(); return; }
+      ok.disabled = true; status.className = "ai-status"; status.textContent = "Teste den Schlüssel …";
+      try {
+        const m = await aiPickModel(k, true);
+        setAiKey(k);
+        status.className = "ai-status ok"; status.textContent = `Funktioniert ✓ (Modell: ${m})`;
+        haptic(15);
+        setTimeout(() => { closeSheet(null); if (then) then(); else toast("KI-Hilfe ist bereit"); }, 700);
+      } catch (e) {
+        status.className = "ai-status bad"; status.textContent = e.message || "Test fehlgeschlagen";
+        ok.disabled = false;
+      }
+    });
+    root.appendChild(el("div", { class: "sheet-row" }, [cancel, ok]));
+  });
 }
 
 /* ---------- Song-Menü ---------- */
@@ -4792,6 +5073,9 @@ function openLyricsMore() {
     root.appendChild(el("div", { class: "sheet-group" }, [
       sheetItem("copy", "Alle Lyrics kopieren", copyLyrics),
       sheetItem("share", "Als Text teilen", shareLyrics),
+    ]));
+    root.appendChild(el("div", { class: "sheet-group" }, [
+      sheetItem("wave", "KI-Hilfe (Gemini)", () => openAiSetup(), { note: aiKey() ? "an" : "einrichten" }),
     ]));
     root.appendChild(el("div", { class: "sheet-group" }, [
       toggleRow("Beim Abspielen mitscrollen", "Springt zum Teil, der gerade läuft", Settings.follow, (v) => { Settings.follow = v; saveSettings(); $("#lyr-follow").classList.toggle("on", v); }),

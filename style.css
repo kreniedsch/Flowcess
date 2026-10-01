@@ -834,3 +834,39 @@ input[type=range].center-zero::-webkit-slider-runnable-track {
 .ab-hint { font-weight: 500; color: var(--label3); }
 
 .app-ver { flex-shrink: 0; text-align: center; font-size: 12px; color: var(--label3); padding: 18px 0 0; }
+
+/* KI-Schreibhilfe */
+.ai-btn { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 11px; border-radius: 15px; font-size: 13px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, rgba(255,122,217,.28), rgba(125,92,255,.28)); border: 1px solid rgba(184,107,255,.55); margin-right: 2px; }
+.ai-btn:active { transform: scale(.95); }
+.ai-lines { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 4px -18px 0; padding: 4px 18px 6px; }
+.ai-lines::-webkit-scrollbar { display: none; }
+.ai-line { flex-shrink: 0; max-width: 78%; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 13px; border-radius: 14px; background: var(--glass-2); border: 1px solid var(--stroke); color: var(--label2); font-size: 14px; font-weight: 600; }
+.ai-line span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ai-line small { font-size: 11px; color: var(--label3); }
+.ai-line.sel { color: var(--label); border-color: rgba(184,107,255,.7); background: rgba(184,107,255,.16); }
+.ai-acts { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin-top: 12px; }
+.ai-acts button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 6px; border-radius: 16px; background: var(--glass-2); border: 1px solid var(--stroke); font-size: 13px; font-weight: 800; color: var(--label); }
+.ai-acts button:active { background: rgba(184,107,255,.2); }
+.ai-ico { font-size: 20px; line-height: 1; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ai-wish { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.ai-wish .sheet-input { margin: 0; flex: 1; }
+.ai-go { width: 48px; height: 48px; flex-shrink: 0; border-radius: 14px; background: var(--grad); display: grid; place-items: center; }
+.ai-go svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ai-out { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.ai-wait { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 18px 0; color: var(--label2); font-weight: 700; font-size: 14px; }
+.ai-spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid rgba(184,107,255,.25); border-top-color: #c58bff; animation: aiSpin .8s linear infinite; }
+@keyframes aiSpin { to { transform: rotate(360deg); } }
+.ai-lang { align-self: center; font-size: 12px; font-weight: 700; color: #d6b8ff; background: rgba(184,107,255,.14); padding: 5px 10px; border-radius: 10px; }
+.ai-sec { font-size: 13px; font-weight: 700; color: var(--label2); margin: 6px 2px 0; }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-chips button { padding: 9px 13px; border-radius: 12px; background: var(--glass-2); border: 1px solid var(--stroke); font-size: 15px; font-weight: 700; color: var(--label); }
+.ai-chips button.used, .ai-card.used { border-color: rgba(76,217,100,.6); background: rgba(76,217,100,.12); }
+.ai-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 12px 14px; border-radius: 16px; background: var(--glass-2); border: 1px solid var(--stroke); color: var(--label); font-size: 16px; font-weight: 600; line-height: 1.4; }
+.ai-card small { font-size: 11px; font-weight: 600; color: var(--label3); }
+.ai-err { padding: 12px 14px; border-radius: 14px; background: rgba(255,59,78,.12); border: 1px solid rgba(255,59,78,.35); color: #ffb3bb; font-size: 14px; font-weight: 600; }
+.ai-tip { font-size: 12px; color: var(--label3); text-align: center; margin: 6px 0 0; }
+.ai-steps { margin: 6px 0 12px; padding-left: 22px; color: var(--label2); font-size: 14px; line-height: 1.6; }
+.ai-steps b { color: var(--label); }
+.ai-status { min-height: 18px; font-size: 13px; font-weight: 700; color: var(--label2); text-align: center; margin: 8px 0 0; }
+.ai-status.ok { color: #4cd964; } .ai-status.bad { color: #ff6b7a; }
