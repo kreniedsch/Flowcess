@@ -3225,8 +3225,7 @@ function renderTracks() {
       el("div", { class: "track-main" }, [
         name,
         el("div", { class: "track-meta" }, [
-          el("span", { text: `Start ${fmtTime(Math.max(0, t.offset))}` }),
-          el("span", { text: `Länge ${fmtTime(t.duration)}` }),
+          el("span", { text: `${fmtTime(Math.max(0, t.offset))} – ${fmtTime(Math.max(0, t.offset) + (t.duration || 0))}` }),
 
         ]),
       ]),
@@ -3394,6 +3393,7 @@ function renderLibrary() {
           el("span", { text: fmtTime(s.duration || 0) }),
           s.takes && s.takes.length ? el("span", { text: `${s.takes.length} Take${s.takes.length > 1 ? "s" : ""}` }) : null,
         ]),
+        songPartsBar(s),
       ]),
       tags,
     ]);
@@ -3418,6 +3418,24 @@ function renderLibrary() {
     ]));
   }
   if (q && !songs.length) list.appendChild(el("div", { class: "track-empty", text: `Kein Song mit „${q}“.` }));
+}
+
+/* Farbige Leiste mit den Songteilen (für die Song-Liste) */
+function songPartsBar(s) {
+  const secs = (s.sections || []).slice().sort((a, b) => a.time - b.time);
+  const bar = el("span", { class: "parts-bar" });
+  const total = s.duration || 0;
+  if (!secs.length || !total) return bar;
+  secs.forEach((sec, i) => {
+    const end = i + 1 < secs.length ? secs[i + 1].time : total;
+    const w = Math.max(0.5, end - sec.time);
+    const p = el("i");
+    p.style.flexGrow = String(w);
+    p.style.background = typeColor(sec.type);
+    bar.appendChild(p);
+  });
+  if (secs[0].time > 0.5) { const p = el("i"); p.style.flexGrow = String(secs[0].time); p.style.background = "rgba(255,255,255,.08)"; bar.insertBefore(p, bar.firstChild); }
+  return bar;
 }
 
 async function createSong(name) {
@@ -4278,9 +4296,8 @@ function openTakeSheet(id) {
   S.selTakeId = id;
   renderTracks();
   openSheet((root) => {
-    sheetHeader(root, t.name, `ab ${fmtTime(Math.max(0, t.offset))} · ${fmtTime(t.duration)} lang`);
+    sheetHeader(root, t.name, `${fmtTime(Math.max(0, t.offset))} – ${fmtTime(Math.max(0, t.offset) + (t.duration || 0))} · ${fmtFaderDb(dbLoad(t.gainDb))} dB`);
 
-    root.appendChild(el("p", { class: "sheet-sub", text: `Lautstärke: ${fmtFaderDb(dbLoad(t.gainDb))} dB – direkt am Regler in der Spur ändern.` }));
 
     // Sync-Korrektur
     const nudgeLbl = el("b", { text: "" });
@@ -4292,7 +4309,7 @@ function openTakeSheet(id) {
       return b;
     };
     root.appendChild(el("div", { class: "sheet-field" }, [
-      el("div", { class: "sheet-field-label" }, [el("span", { text: "Timing verschieben (wenn Take zu spät/früh ist)" }), nudgeLbl]),
+      el("div", { class: "sheet-field-label" }, [el("span", { text: "Timing (Take zu früh / zu spät)" }), nudgeLbl]),
       el("div", { class: "nudge" }, [nb("–50 ms", -0.05), nb("–10 ms", -0.01), nb("+10 ms", 0.01), nb("+50 ms", 0.05)]),
     ]));
 
@@ -4306,7 +4323,7 @@ function openTakeSheet(id) {
         ? sheetItem("sparkle", t.cleanOn ? "Original hören (mit Beat-Rest)" : "Clean hören (Beat entfernt)", () => toggleCleanTake(t), { note: t.cleanOn ? "Clean an" : "Original" })
         : sheetItem("sparkle", "Beat aus Vocal entfernen", () => removeBeatFromTake(t), { note: t.clean === "processing" ? "läuft …" : "" }),
       t.clean === "done" ? sheetItem("sparkle", "Beat nochmal entfernen (neu berechnen)", () => removeBeatFromTake(t)) : null,
-      sheetItem("wave", "FX: EQ, Kompressor, Hall, Echo, Auto-Tune", () => openFxSheet(t.id), { note: t.fx && t.fx.on ? "an" : "aus" }),
+      sheetItem("wave", "FX & Auto-Tune", () => openFxSheet(t.id), { note: t.fx && t.fx.on ? "an" : "aus" }),
       sheetItem("share", "Take teilen / sichern", () => shareTake(t)),
     ]));
     root.appendChild(el("div", { class: "sheet-group" }, [

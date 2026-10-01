@@ -752,3 +752,21 @@ input[type=range].center-zero::-webkit-slider-runnable-track {
 .sheet-grabber, .sheet h3, .sheet .sheet-sub { touch-action: none; }
 .sheet-grabber { position: relative; }
 .sheet-grabber::after { content: ""; position: absolute; left: -60px; right: -60px; top: -10px; bottom: -12px; }
+
+/* ---------------- Politur ---------------- */
+.toast { top: calc(var(--safe-top) + 58px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(100% - 48px); }
+.parts-bar { display: flex; gap: 2px; height: 5px; margin-top: 8px; max-width: 220px; }
+.parts-bar:empty { display: none; }
+.parts-bar i { display: block; border-radius: 2px; min-width: 3px; }
+.nav-back { min-width: 72px; }
+.nav .icon-btn { margin-left: 32px; }
+.chip, .sec-chip, .tag-btn, .q-tag, .ms-btn, .more-btn, .dock-side, .mini-action, .lyr-add-row button,
+.sheet-chips button, .key-grid button, .stepper button, .nudge button, .quick-toggles button, .sec-edit-btns button,
+.track-add, .pill-btn, .live-btn, .clean-btn, .icon-btn, .t-btn {
+  transition: transform .12s ease, background-color .2s, box-shadow .2s, opacity .2s;
+}
+.chip:active, .sec-chip:active, .tag-btn:active, .q-tag:active, .ms-btn:active, .more-btn:active, .dock-side:active,
+.mini-action:active, .lyr-add-row button:active, .sheet-chips button:active, .key-grid button:active, .stepper button:active,
+.nudge button:active, .quick-toggles button:active, .sec-edit-btns button:active, .track-add:active, .live-btn:active,
+.clean-btn:active, .sheet-row > button:active, .sheet-cancel:active { transform: scale(.95); }
+.sheet-item:active { background: var(--glass-2); }
