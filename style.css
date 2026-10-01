@@ -825,3 +825,10 @@ input[type=range].center-zero::-webkit-slider-runnable-track {
 .lanes-block { margin-top: 20px; }
 .lanes-canvas { display: block; width: 100%; height: 64px; touch-action: none; border-radius: 12px; }
 .lanes-count { font-size: 14px; font-weight: 600; color: var(--label2); }
+
+/* FX Vorher / Nachher */
+.ab-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 16px; background: rgba(255,255,255,.06); border: 1px solid var(--stroke); }
+.ab-seg button { height: 44px; border: 0; border-radius: 12px; background: transparent; color: var(--label2); font: inherit; font-size: 15px; font-weight: 700; }
+.ab-seg button.sel { color: #fff; background: var(--grad); box-shadow: 0 6px 18px rgba(157,92,255,.4); }
+.ab-seg button:first-child.sel { background: rgba(255,255,255,.16); box-shadow: none; }
+.ab-hint { font-weight: 500; color: var(--label3); }

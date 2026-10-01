@@ -1580,7 +1580,7 @@ function applyTakeFx(t) {
   const n = E.takes.get(t.id);
   if (!n || !n.fx) return;
   const fx = t.fx || { on: false };
-  const on = !!fx.on;
+  const on = !!fx.on && !t._bypass;
   const useChain = on && (fx.eq || fx.comp > 0);
   if (useChain !== n.fxWired) {
     try { n.input.disconnect(); } catch {}
@@ -1620,7 +1620,7 @@ function takeBaseBuffer(t, n) {
   return t.cleanOn && t.clean === "done" && n.cleanBuf ? n.cleanBuf : n.buf;
 }
 function takePlayBuffer(t, n) {
-  if (t.fx && t.fx.on && t.fx.tune && t.fx.tune !== "off" && n.tuned && n.tuned.key === tuneKeyFor(t)) return n.tuned.buf;
+  if (t.fx && t.fx.on && !t._bypass && t.fx.tune && t.fx.tune !== "off" && n.tuned && n.tuned.key === tuneKeyFor(t)) return n.tuned.buf;
   return takeBaseBuffer(t, n);
 }
 
@@ -1840,6 +1840,26 @@ function openFxSheet(id) {
     };
     updInfo();
     root.appendChild(info);
+
+    // Vorher / Nachher: kurz ohne FX hören (wird nicht gespeichert)
+    const ab = el("div", { class: "ab-seg" });
+    const bBefore = el("button", { text: "Vorher" });
+    const bAfter = el("button", { class: "sel", text: "Nachher" });
+    ab.append(bBefore, bAfter);
+    const setAB = async (bypass) => {
+      if (!!t._bypass === bypass && S.playing) return;
+      t._bypass = bypass;
+      bBefore.classList.toggle("sel", bypass); bAfter.classList.toggle("sel", !bypass);
+      haptic();
+      applyTakeFx(t);
+      await unlockAudio();
+      if (S.playing) play(getPos());
+      else { S.selTakeId = t.id; play(Math.max(minPos(), t.offset)); }
+    };
+    bBefore.addEventListener("click", () => setAB(true));
+    bAfter.addEventListener("click", () => setAB(false));
+    sheetOnClose = () => { if (t._bypass) { t._bypass = false; applyTakeFx(t); if (S.playing) play(getPos()); } };
+    if (fx.on) root.appendChild(el("div", { class: "sheet-field" }, [el("div", { class: "sheet-field-label" }, [el("span", { text: "Vergleichen" }), el("span", { class: "ab-hint", text: "tippen zum Hören" })]), ab]));
 
     root.appendChild(el("div", { class: "sheet-group" }, [
       toggleRow("FX an", "Der FX-Knopf in der Spur leuchtet bunt", fx.on, (v) => { fx.on = v; commit(true); }),
@@ -4157,7 +4177,9 @@ function liveJump(dir) {
 
 /* ===================== 9. SHEETS ===================== */
 let sheetResolve = null;
+let sheetOnClose = null;
 function openSheet(build) {
+  if (sheetOnClose) { const f = sheetOnClose; sheetOnClose = null; try { f(); } catch {} }
   const content = $("#sheet-content");
   content.innerHTML = "";
   build(content);
@@ -4165,6 +4187,7 @@ function openSheet(build) {
   $("#sheet-backdrop").classList.remove("hidden");
 }
 function closeSheet(result) {
+  if (sheetOnClose) { const f = sheetOnClose; sheetOnClose = null; try { f(); } catch {} }
   $("#sheet").classList.add("hidden");
   $("#sheet-backdrop").classList.add("hidden");
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
