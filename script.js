@@ -741,6 +741,7 @@ async function toggleRecord() {
 
 async function startRecording() {
   if (!S.song) return;
+  hideSavedCard();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
     sheetAlert("Aufnahme nicht möglich", "Dieser Browser kann nicht aufnehmen. Öffne Flowcess in Safari (iPhone) oder Chrome.");
     return;
@@ -896,7 +897,95 @@ async function finishRecording() {
   saveSongNow();
   renderTracks();
   renderAll();
-  toast(`${take.name} gespeichert`);
+  haptic([12, 60, 12]);
+  if (S.liveOpen) toast(`${take.name} gespeichert`);
+  else showSavedCard(take);
+}
+
+/* Karte „Take gespeichert“: Anhören · ★ Bester · Nochmal */
+let savedCardTimer = null;
+function hideSavedCard() {
+  clearTimeout(savedCardTimer);
+  const c = $("#saved-card");
+  if (c) { c.classList.remove("show"); setTimeout(() => c.remove(), 300); }
+}
+function showSavedCard(take) {
+  hideSavedCard();
+  const old = $("#saved-card"); if (old) old.remove();
+  const s = S.song;
+  const start = Math.max(0, take.offset);
+  const sec = sectionAt(start + 0.05);
+  const b1 = barInfo(start + 0.05), b2 = barInfo(start + (take.duration || 0) - 0.05);
+  const sub = [sec ? sec.label : "", fmtTime(take.duration || 0),
+    b1 && b2 && !b1.pickup ? `Takt ${b1.bar}–${b2.bar}` : ""].filter(Boolean).join(" · ");
+  const wave = el("canvas", { class: "saved-wave" });
+  const starBtn = el("button", { class: "saved-star" + (take.best ? " on" : ""), text: take.best ? "★ Bester" : "☆ Bester" });
+  const listen = el("button", { class: "saved-ghost", text: "Anhören" });
+  const again = el("button", { class: "saved-ghost", html: '<span class="saved-dot"></span>Nochmal' });
+  const close = el("button", { class: "saved-close", "aria-label": "Schliessen", html: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>' });
+  const card = el("div", { class: "saved-card", id: "saved-card", role: "status" }, [
+    el("div", { class: "saved-head" }, [
+      el("span", { class: "saved-check", html: '<svg viewBox="0 0 24 24"><path d="M5 12.5 10 17 19 7"/></svg>' }),
+      el("span", { class: "saved-txt" }, [el("b", { text: `${take.name} gespeichert` }), el("small", { text: sub })]),
+      close,
+    ]),
+    wave,
+    el("div", { class: "saved-btns" }, [listen, starBtn, again]),
+  ]);
+  $("#screen-song").appendChild(card);
+  // Mini-Wellenform
+  requestAnimationFrame(() => {
+    const n = E.takes.get(take.id);
+    const peaks = n && n.peaks;
+    const dpr = window.devicePixelRatio || 1;
+    const w = wave.clientWidth, h = wave.clientHeight;
+    wave.width = w * dpr; wave.height = h * dpr;
+    const g = wave.getContext("2d"); g.scale(dpr, dpr);
+    const bars = Math.floor(w / 4);
+    let mx = 0.0001;
+    if (peaks) for (let i = 0; i < peaks.length; i++) mx = Math.max(mx, peaks[i]);
+    g.fillStyle = take.color || "#b86bff";
+    for (let i = 0; i < bars; i++) {
+      let v = 0.15;
+      if (peaks && peaks.length) {
+        const a = Math.floor(i / bars * peaks.length), z = Math.max(a + 1, Math.floor((i + 1) / bars * peaks.length));
+        v = 0; for (let k = a; k < z; k++) v = Math.max(v, peaks[k]); v /= mx;
+      }
+      const bh = Math.max(2, v * (h - 6));
+      g.beginPath(); g.roundRect ? g.roundRect(i * 4, (h - bh) / 2, 2.4, bh, 1.2) : g.rect(i * 4, (h - bh) / 2, 2.4, bh); g.fill();
+    }
+  });
+  requestAnimationFrame(() => card.classList.add("show"));
+  const keep = () => { clearTimeout(savedCardTimer); savedCardTimer = setTimeout(hideSavedCard, 9000); };
+  keep();
+  close.addEventListener("click", hideSavedCard);
+  listen.addEventListener("click", async () => {
+    hideSavedCard(); S.selTakeId = take.id; renderTracks();
+    await unlockAudio(); await play(Math.max(minPos(), take.offset));
+  });
+  starBtn.addEventListener("click", () => {
+    keep(); haptic();
+    take.best = !take.best;
+    if (take.best) {
+      const a = take.offset, z = take.offset + (take.duration || 0);
+      s.takes.forEach((o) => { if (o !== take && o.best && o.offset < z && o.offset + (o.duration || 0) > a) o.best = false; });
+    }
+    starBtn.classList.toggle("on", take.best);
+    starBtn.textContent = take.best ? "★ Bester" : "☆ Bester";
+    saveSong(); renderTracks();
+  });
+  again.addEventListener("click", async () => {
+    hideSavedCard();
+    if (S.playing) pause();
+    const sc = sectionAt(start + 0.05);
+    S.pos = sc ? sectionRange(sc).start : start;
+    renderAll();
+    await startRecording();
+  });
+  // Nach unten wischen = schliessen
+  let y0 = null;
+  card.addEventListener("pointerdown", (e) => { y0 = e.clientY; });
+  card.addEventListener("pointerup", (e) => { if (y0 != null && e.clientY - y0 > 40) hideSavedCard(); y0 = null; });
 }
 
 /* Audiodatei (z. B. Sprachmemo) als Take ab Playhead einfügen */
@@ -3210,7 +3299,7 @@ function renderTracks() {
     sBtn.addEventListener("click", (e) => { e.stopPropagation(); t.solo = !t.solo; haptic(); applyMix(); saveSong(); renderTracks(); renderAll(); });
     const more = el("button", { class: "more-btn", html: ICONS.more, "aria-label": "Take-Optionen" });
     more.addEventListener("click", (e) => { e.stopPropagation(); openTakeSheet(t.id); });
-    const name = el("button", { class: "track-name", text: t.name });
+    const name = el("button", { class: "track-name", text: t.best ? `${t.name} ★` : t.name });
     name.addEventListener("click", async (e) => {
       e.stopPropagation();
       const v = await sheetPrompt("Take umbenennen", t.name, "Name");
