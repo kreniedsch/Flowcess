@@ -3658,7 +3658,7 @@ async function loadSongs() {
   S.songs = (await Store.allSongs()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-const APP_VERSION = "202610012253";
+const APP_VERSION = "202610012259";
 function renderLibrary() {
   const list = $("#lib-list");
   const q = ($("#lib-search").value || "").trim().toLowerCase();
@@ -4586,7 +4586,8 @@ function openAiSetup(then) {
       el("li", { html: 'Tippe auf <b>„Get API key“</b> › <b>„Create API key“</b>.' }),
       el("li", { html: 'Schlüssel kopieren und hier einfügen.' }),
     ]));
-    const inp = el("input", { class: "sheet-input", type: "password", placeholder: "Gemini-Schlüssel einfügen", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    // kein type="password": sonst fragt das iPhone ständig „Passwort sichern?“
+    const inp = el("input", { class: "sheet-input ai-key-input", type: "text", inputmode: "text", placeholder: "Gemini-Schlüssel einfügen", autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false", "data-1p-ignore": "true", "data-lpignore": "true" });
     inp.value = aiKey();
     root.appendChild(inp);
     const status = el("p", { class: "ai-status" });

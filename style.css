@@ -870,3 +870,5 @@ input[type=range].center-zero::-webkit-slider-runnable-track {
 .ai-steps b { color: var(--label); }
 .ai-status { min-height: 18px; font-size: 13px; font-weight: 700; color: var(--label2); text-align: center; margin: 8px 0 0; }
 .ai-status.ok { color: #4cd964; } .ai-status.bad { color: #ff6b7a; }
+
+.ai-key-input { -webkit-text-security: disc; }
