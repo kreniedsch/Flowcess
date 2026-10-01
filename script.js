@@ -1039,7 +1039,18 @@ function updateMeter(peak, which) {
     fill.style.setProperty("--lvl", pct + "%");
     $("#rec-meter-peak").style.setProperty("--pk", Rec.peakHold + "%");
     $("#live-meter-fill").style.setProperty("--lvl", pct + "%");
-    $("#rec-meter-db").textContent = isFinite(db) ? `${db.toFixed(1)} dB` : "–∞ dB";
+    // Pegel-Hinweis: lauteste Stelle der letzten 1,5 s → zu leise / gut / zu laut
+    if (!Rec._hintT || now - Rec._hintT > 300) {
+      Rec._hintT = now;
+      const tNow = getPos();
+      let mx = 0;
+      for (let i = Rec.livePeaks.length - 1; i >= 0 && Rec.livePeaks[i].t > tNow - 1.5; i--) mx = Math.max(mx, Rec.livePeaks[i].v);
+      const mdb = gainToDb(mx);
+      const st = !isFinite(mdb) || mdb < -32 ? ["zu leise", "low"] : mdb > -1.5 ? ["zu laut", "hot"] : ["gut", "ok"];
+      const dbEl = $("#rec-meter-db");
+      dbEl.textContent = `${isFinite(mdb) ? Math.round(mdb) : "–∞"} dB · ${st[0]}`;
+      dbEl.dataset.state = st[1];
+    }
     const t = Math.max(0, getPos() - (Rec.recStartSongPos || 0));
     $("#rec-meter-label").textContent = `REC ${fmtTime(t)}`;
   }
@@ -3687,9 +3698,20 @@ function renderFrame(pos) {
   const sec = sectionAt(pos);
   const secId = sec ? sec.id : null;
   const rem = (d > 0 ? `–${fmtTime(Math.max(0, d - pos))}` : "") + (beatLen() && pos >= 0 ? ` &nbsp; <span class="bar-pos">${barLabel(pos)}</span>` : "");
+  // Kommt gleich der nächste Teil? → „Hook in 2 Takten“
+  let upcoming = "";
+  const spbNow = beatLen();
+  if (S.playing && spbNow && pos >= 0) {
+    const nxt = sortedSections().find((x) => x.time > pos + 0.02);
+    if (nxt) {
+      const barsLeft = Math.ceil((nxt.time - pos) / (spbNow * 4) - 0.001);
+      if (barsLeft <= 4) upcoming = ` &nbsp; <span class="next-hint" style="color:${typeColor(nxt.type)}">${escapeHtml(nxt.label)} in ${barsLeft} Takt${barsLeft > 1 ? "en" : ""}</span>`;
+    }
+  }
+  const remOrNext = upcoming ? (beatLen() && pos >= 0 ? `<span class="bar-pos">${barLabel(pos)}</span>${upcoming}` : upcoming) : rem;
   $("#time-sub").innerHTML = pos < 0
     ? `<b>Einzählen …</b>`
-    : sec ? `<b style="color:${typeColor(sec.type)}">${escapeHtml(sec.label)}</b> &nbsp; ${rem}` : rem || "&nbsp;";
+    : sec ? `<b style="color:${typeColor(sec.type)}">${escapeHtml(sec.label)}</b> &nbsp; ${remOrNext}` : remOrNext || "&nbsp;";
   $("#now-time").textContent = `${fmtTime(Math.max(0, pos))} / ${fmtTime(d)}`;
   if (secId !== lastSectionIdShown) {
     lastSectionIdShown = secId;
