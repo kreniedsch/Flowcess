@@ -2,7 +2,7 @@
 
 Vocal-Recording-App im Stil von Apple Sprachmemos – für Rap & Gesang.
 
-**App öffnen:** https://kreniedsch.github.io/flowcess/
+**App öffnen:** https://kreniedsch.github.io/Flowcess/
 
 Auf dem iPhone: Link in Safari öffnen → Teilen → „Zum Home-Bildschirm“.
 
