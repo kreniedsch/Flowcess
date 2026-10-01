@@ -3632,6 +3632,7 @@ async function loadSongs() {
   S.songs = (await Store.allSongs()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+const APP_VERSION = "202610012217";
 function renderLibrary() {
   const list = $("#lib-list");
   const q = ($("#lib-search").value || "").trim().toLowerCase();
@@ -3692,6 +3693,7 @@ function renderLibrary() {
     ]));
   }
   if (q && !songs.length) list.appendChild(el("div", { class: "track-empty", text: `Kein Song mit „${q}“.` }));
+  if (!q) list.appendChild(el("div", { class: "app-ver", text: `Flowcess · Version ${APP_VERSION}` }));
 }
 
 /* „Weiter schreiben“: zuletzt bearbeiteter Song, wo du aufgehört hast */
