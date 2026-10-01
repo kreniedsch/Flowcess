@@ -2542,10 +2542,20 @@ function drawLanes(pos = getPos()) {
     c.width = Math.round(cw * dpr); c.height = Math.round(cssH * dpr);
   }
   LN.rows = rows;
-  const g = c.getContext("2d");
+  const dur = Math.max(songDuration(), 0.1);
+  const solo0 = anySolo();
+  // Wellenformen nur neu zeichnen, wenn sich etwas geändert hat (spart Akku/ruckelt nicht)
+  const sig = [LN.w, LN.h, dpr, dur.toFixed(3), S.selTakeId, solo0, beatSilent(s), !!E.beatPeaks, s.beat ? (s.beat.trim || 0) + ":" + beatRate(s) : "",
+    sortedSections().map((x) => x.time).join(","),
+    rows.map((r) => r.kind === "take" ? [r.take.id, r.take.offset, r.take.duration, r.take.muted, r.take.solo, r.take.best, r.color, !!(E.takes.get(r.take.id) || {}).peaks].join("|") : r.kind).join(";")].join("#");
+  const main = c.getContext("2d");
+  if (!LN.cache) LN.cache = document.createElement("canvas");
+  if (LN.sig !== sig) {
+  LN.sig = sig;
+  const cc = LN.cache; cc.width = c.width; cc.height = c.height;
+  const g = cc.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, LN.w, LN.h);
-  const dur = Math.max(songDuration(), 0.1);
   const x0 = LN.labelW, aw = LN.w - x0 - 4;
   const k = aw / dur;
   const solo = anySolo();
@@ -2589,11 +2599,7 @@ function drawLanes(pos = getPos()) {
       if (sel || r.kind === "rec") { g.strokeStyle = hexA(r.color, 0.9); g.lineWidth = 1.2; roundRect(g, rx + 0.5, y + 0.5, rw - 1, hh - 1, 7); g.stroke(); }
       g.fillStyle = hexA(r.color, muted ? 0.3 : 0.95);
       if (r.kind === "rec") {
-        for (const p of Rec.livePeaks) {
-          const px = x0 + p.t * k; if (px < rx) continue;
-          const bh = Math.max(1, Math.min(1, p.v) * (hh / 2 - 3));
-          g.fillRect(px, mid - bh, 1, bh * 2);
-        }
+        // wird unten live gezeichnet
       } else if (peaks && map) {
         let mx = 0.0001;
         const vals = [];
@@ -2603,10 +2609,30 @@ function drawLanes(pos = getPos()) {
       }
     }
   });
+  }
+  main.setTransform(1, 0, 0, 1, 0, 0);
+  main.clearRect(0, 0, c.width, c.height);
+  main.drawImage(LN.cache, 0, 0);
+  main.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const x0m = LN.labelW, km = (LN.w - x0m - 4) / dur;
+  // Aufnahme läuft: neue Spur live
+  if (S.recording && rows[rows.length - 1].kind === "rec") {
+    const i = rows.length - 1, y = 2 + i * LN.rowH, hh = LN.rowH - 4, mid = y + hh / 2;
+    const a = Math.max(0, Rec.recStartSongPos || 0), z = Math.max(a, pos);
+    main.fillStyle = "rgba(255,59,78,.16)";
+    roundRect(main, x0m + a * km, y, Math.max(3, (z - a) * km), hh, 7); main.fill();
+    main.fillStyle = "rgba(255,59,78,.95)";
+    const pk = Rec.livePeaks, step = Math.max(1, Math.floor(pk.length / Math.max(1, (z - a) * km)));
+    for (let j = 0; j < pk.length; j += step) {
+      const p = pk[j]; const px = x0m + p.t * km; if (px < x0m + a * km) continue;
+      const bh = Math.max(1, Math.min(1, p.v) * (hh / 2 - 3));
+      main.fillRect(px, mid - bh, 1, bh * 2);
+    }
+  }
   // Abspielstrich
-  const px = x0 + clamp(pos, 0, dur) * k;
-  g.fillStyle = "#fff";
-  g.fillRect(Math.round(px) - 1, 0, 2, LN.h);
+  const px = x0m + clamp(pos, 0, dur) * km;
+  main.fillStyle = "#fff";
+  main.fillRect(Math.round(px) - 1, 0, 2, LN.h);
 }
 function setupLanes() {
   const c = $("#lanes-canvas");
@@ -3632,7 +3658,7 @@ async function loadSongs() {
   S.songs = (await Store.allSongs()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-const APP_VERSION = "202610012241";
+const APP_VERSION = "202610012253";
 function renderLibrary() {
   const list = $("#lib-list");
   const q = ($("#lib-search").value || "").trim().toLowerCase();
@@ -4317,7 +4343,10 @@ function aiErr(status, detail) {
   else if (status === 401 || status === 403) msg = "Der Schlüssel hat keinen Zugriff. Prüfe ihn unter ••• › KI-Hilfe.";
   else if (status >= 500) msg = "Gemini ist gerade überlastet. Versuch es gleich nochmal.";
   else if (status === "parse") msg = "Gemini hat komisch geantwortet. Versuch es nochmal.";
-  const e = new Error(msg); e.aiStatus = status; e.detail = d; return e;
+  let code = "";
+  try { const j = JSON.parse(d); code = j.error ? [j.error.code, j.error.status].filter(Boolean).join(" ") : ""; if (code) code = ` (${code})`; } catch {}
+  if (!code && typeof status === "number") code = ` (${status})`;
+  const e = new Error(msg + code); e.aiStatus = status; e.detail = d; return e;
 }
 async function aiFetch(url, opts) {
   try { return await fetch(url, opts); } catch (e) { throw aiErr("net", e && e.message); }
@@ -4335,7 +4364,9 @@ async function aiPickModel(key, force) {
   const pick = flash[0]
     || names.filter((n) => /flash/.test(n) && !/(tts|live|image|audio|transcribe|lite|embedding)/.test(n)).sort((a, b) => ver(b) - ver(a))[0]
     || AI_FALLBACK_MODELS[0];
-  Settings.aiModel = pick; saveSettings();
+  Settings.aiModel = pick;
+  Settings.aiModels = [...new Set([...flash, ...AI_FALLBACK_MODELS.filter((m) => names.includes(m))])].slice(0, 6);
+  saveSettings();
   return pick;
 }
 function aiParseJson(txt) {
@@ -4347,7 +4378,7 @@ function aiParseJson(txt) {
 async function aiCall(system, user) {
   const key = aiKey();
   if (!key) throw aiErr("nokey");
-  let model = await aiPickModel(key);
+  let model = await aiPickModel(key, !Settings.aiModels); // alte Einstellung → Modell-Liste neu holen
   const body = JSON.stringify({
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ role: "user", parts: [{ text: user }] }],
@@ -4358,7 +4389,18 @@ async function aiCall(system, user) {
   if (r.status === 404) {
     // Modell gibt es nicht mehr → neu wählen
     try { model = await aiPickModel(key, true); r = await go(model); } catch {}
-    for (const m of AI_FALLBACK_MODELS) { if (r.status !== 404) break; r = await go(m); if (r.ok) { Settings.aiModel = m; saveSettings(); } }
+  }
+  // Überlastet (503/500) oder Limit nur für dieses Modell (429) → kurz warten, dann andere Modelle probieren
+  if (r.status >= 500 || r.status === 429 || r.status === 404) {
+    const tried = new Set([model]);
+    if (r.status >= 500) { await new Promise((ok) => setTimeout(ok, 1200)); r = await go(model); }
+    const list = [...(Settings.aiModels || []), ...AI_FALLBACK_MODELS];
+    for (const m of list) {
+      if (r.ok || tried.has(m)) continue;
+      tried.add(m);
+      r = await go(m);
+      if (r.ok) { Settings.aiModel = m; saveSettings(); }
+    }
   }
   if (!r.ok) throw aiErr(r.status, await r.text());
   const d = await r.json();
