@@ -3130,9 +3130,18 @@ function updateSnapUI() {
   b.querySelector("span").textContent = snap ? "Takt" : "Frei";
   $("#sec-edit-prev").lastChild.textContent = snap ? "1 Takt" : "0,1 s";
   $("#sec-edit-next").firstChild.textContent = snap ? "1 Takt" : "0,1 s";
-  $("#sec-edit-hint").textContent = snap
+  let hint = snap
     ? "Ziehe die runden Griffe – sie rasten auf jeden Takt ein. „Frei“ = stufenlos."
     : "Frei: Griffe stufenlos ziehen, Knöpfe verschieben um 0,1 s.";
+  // Letzter Teil: endet immer am Song-Ende → erklären, warum er nicht länger geht
+  const secs = sortedSections();
+  const cur = s && secs.find((x) => x.id === S.editSecId);
+  if (cur && secs[secs.length - 1] === cur) {
+    hint = s.beat
+      ? `Der letzte Teil geht automatisch bis zum Ende des Beats (${fmtTime(songDuration())}).`
+      : `Der letzte Teil geht bis zum Song-Ende (${fmtTime(songDuration())}). Ohne Beat ist der Song nur so lang wie deine Aufnahmen – nimm weiter auf oder lade einen Beat, dann wird der Teil automatisch länger.`;
+  }
+  $("#sec-edit-hint").textContent = hint;
 }
 
 function nudgeSection(dir) {
@@ -3658,7 +3667,7 @@ async function loadSongs() {
   S.songs = (await Store.allSongs()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-const APP_VERSION = "202610012259";
+const APP_VERSION = "202610012304";
 function renderLibrary() {
   const list = $("#lib-list");
   const q = ($("#lib-search").value || "").trim().toLowerCase();
