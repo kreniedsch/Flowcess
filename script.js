@@ -2465,6 +2465,127 @@ function drawWave(pos = getPos()) {
   g.restore();
 }
 
+/* ---------- Spuren-Übersicht: ganzer Song, eine Zeile pro Spur ---------- */
+const LN = { labelW: 78, rows: [], w: 0, h: 0, rowH: 30 };
+function laneRows() {
+  const s = S.song;
+  if (!s) return [];
+  const rows = [];
+  if (s.beat) rows.push({ kind: "beat", name: "Beat", color: "#9b8cff" });
+  s.takes.forEach((t) => rows.push({ kind: "take", take: t, name: t.best ? `${t.name} ★` : t.name, color: t.color || TAKE_COLORS[0] }));
+  if (S.recording) rows.push({ kind: "rec", name: "● REC", color: "#ff3b4e" });
+  return rows;
+}
+function drawLanes(pos = getPos()) {
+  const c = $("#lanes-canvas");
+  const s = S.song;
+  if (!c || !s) return;
+  const rows = laneRows();
+  $("#lanes-block").classList.toggle("hidden", !rows.length);
+  if (!rows.length) return;
+  const cnt = s.takes.length;
+  $("#lanes-count").textContent = cnt ? `${cnt} Take${cnt > 1 ? "s" : ""}` : "";
+  LN.rowH = rows.length > 6 ? 22 : rows.length > 4 ? 26 : 30;
+  const cssH = rows.length * LN.rowH + 4;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = c.clientWidth;
+  if (!cw) return;
+  if (LN.w !== cw || LN.h !== cssH) {
+    LN.w = cw; LN.h = cssH;
+    c.style.height = cssH + "px";
+    c.width = Math.round(cw * dpr); c.height = Math.round(cssH * dpr);
+  }
+  LN.rows = rows;
+  const g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, LN.w, LN.h);
+  const dur = Math.max(songDuration(), 0.1);
+  const x0 = LN.labelW, aw = LN.w - x0 - 4;
+  const k = aw / dur;
+  const solo = anySolo();
+  // Songteile als feine Trennlinien
+  g.fillStyle = "rgba(255,255,255,.07)";
+  for (const sec of sortedSections()) g.fillRect(Math.round(x0 + sec.time * k), 0, 1, LN.h);
+  rows.forEach((r, i) => {
+    const y = 2 + i * LN.rowH, hh = LN.rowH - 4, mid = y + hh / 2;
+    const muted = r.kind === "beat" ? beatSilent(s) : r.kind === "take" ? (r.take.muted || (solo && !r.take.solo)) : false;
+    const sel = r.kind === "take" && S.selTakeId === r.take.id;
+    // Name
+    g.font = `${sel ? 800 : 700} 12px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif`;
+    g.textBaseline = "middle";
+    g.fillStyle = muted ? "rgba(236,230,255,.3)" : sel ? "#fff" : "rgba(236,230,255,.75)";
+    let label = r.name;
+    while (label.length > 3 && g.measureText(label).width > x0 - 22) label = label.slice(0, -2) + "…";
+    g.fillStyle = muted ? hexA(r.color, 0.3) : r.color;
+    roundRect(g, 2, mid - 4, 8, 8, 4); g.fill();
+    g.fillStyle = muted ? "rgba(236,230,255,.3)" : sel ? "#fff" : "rgba(236,230,255,.75)";
+    g.fillText(label, 16, mid + 0.5);
+    // Spur-Hintergrund
+    g.fillStyle = sel ? hexA(r.color, 0.10) : "rgba(255,255,255,.035)";
+    roundRect(g, x0, y, aw, hh, 7); g.fill();
+    // Region + Wellenform
+    let a = 0, z = dur, peaks = null, map = null;
+    if (r.kind === "beat") {
+      const trim = s.beat.trim || 0, R = beatRate(s);
+      a = 0; z = Math.min(dur, (beatEnd(s) - trim) / R);
+      peaks = E.beatPeaks; map = (t0, t1) => peakAt(peaks, trim + t0 * R, trim + t1 * R);
+    } else if (r.kind === "take") {
+      a = Math.max(0, r.take.offset); z = r.take.offset + (r.take.duration || 0);
+      const n = E.takes.get(r.take.id); peaks = n && n.peaks;
+      const off = r.take.offset; map = (t0, t1) => peakAt(peaks, t0 - off, t1 - off);
+    } else {
+      a = Math.max(0, Rec.recStartSongPos || 0); z = Math.max(a, pos);
+    }
+    if (z > a) {
+      const rx = x0 + a * k, rw = Math.max(3, (z - a) * k);
+      g.fillStyle = hexA(r.color, muted ? 0.08 : sel ? 0.28 : 0.16);
+      roundRect(g, rx, y, rw, hh, 7); g.fill();
+      if (sel || r.kind === "rec") { g.strokeStyle = hexA(r.color, 0.9); g.lineWidth = 1.2; roundRect(g, rx + 0.5, y + 0.5, rw - 1, hh - 1, 7); g.stroke(); }
+      g.fillStyle = hexA(r.color, muted ? 0.3 : 0.95);
+      if (r.kind === "rec") {
+        for (const p of Rec.livePeaks) {
+          const px = x0 + p.t * k; if (px < rx) continue;
+          const bh = Math.max(1, Math.min(1, p.v) * (hh / 2 - 3));
+          g.fillRect(px, mid - bh, 1, bh * 2);
+        }
+      } else if (peaks && map) {
+        let mx = 0.0001;
+        const vals = [];
+        for (let x = rx; x < rx + rw - 1; x += 2) { const t0 = (x - x0) / k; const v = map(t0, t0 + 2 / k); vals.push([x, v]); if (v > mx) mx = v; }
+        const norm = r.kind === "take" ? 1 / mx : 1;
+        for (const [x, v] of vals) { const bh = Math.max(0.6, Math.min(1, v * norm) * (hh / 2 - 3)); g.fillRect(x, mid - bh, 1.2, bh * 2); }
+      }
+    }
+  });
+  // Abspielstrich
+  const px = x0 + clamp(pos, 0, dur) * k;
+  g.fillStyle = "#fff";
+  g.fillRect(Math.round(px) - 1, 0, 2, LN.h);
+}
+function setupLanes() {
+  const c = $("#lanes-canvas");
+  if (!c) return;
+  let down = null;
+  const posAt = (e) => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const toTime = (x) => clamp((x - LN.labelW) / ((LN.w - LN.labelW - 4) / Math.max(songDuration(), 0.1)), 0, songDuration());
+  c.addEventListener("pointerdown", (e) => {
+    const p = posAt(e); down = { ...p, scrub: p.x > LN.labelW };
+    if (down.scrub && !S.recording) { c.setPointerCapture(e.pointerId); seek(toTime(p.x)); }
+  });
+  c.addEventListener("pointermove", (e) => { if (down && down.scrub && !S.recording) seek(toTime(posAt(e).x)); });
+  c.addEventListener("pointerup", (e) => {
+    if (!down) return;
+    const p = posAt(e);
+    const row = LN.rows[Math.floor((p.y - 2) / LN.rowH)];
+    if (!down.scrub && row && row.kind === "take" && !S.recording) {
+      haptic(); S.selTakeId = row.take.id; seek(Math.max(0, row.take.offset)); renderTracks(); drawLanes();
+    }
+    down = null;
+  });
+  c.addEventListener("pointercancel", () => { down = null; });
+  window.addEventListener("resize", () => { LN.w = 0; drawLanes(); });
+}
+
 function drawOverview(pos = getPos()) {
   const g = W.ovCtx;
   if (!g || !W.ovW) return;
@@ -3692,6 +3813,7 @@ function renderFrame(pos) {
     if (W.layoutRec !== S.recording || W.layoutTakes !== (S.song ? S.song.takes.length : 0)) resizeWave();
     drawWave(pos);
     drawOverview(pos);
+    drawLanes(pos);
     $("#big-time").textContent = fmtTime(Math.max(0, pos), true);
     updateTrackMeters();
   }
@@ -5416,6 +5538,7 @@ function newLyricsBlockFor(song, type) {
 async function boot() {
   W.canvas = $("#wave-canvas");
   W.ctx = W.canvas.getContext("2d");
+  setupLanes();
   W.ov = $("#overview-canvas");
   W.ovCtx = W.ov.getContext("2d");
   bindUI();
