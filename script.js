@@ -3371,6 +3371,13 @@ function renderLibrary() {
   list.innerHTML = "";
   const songs = S.songs.filter((s) => !q || s.name.toLowerCase().includes(q));
   $("#lib-empty").classList.toggle("hidden", S.songs.length > 0);
+  const hr = new Date().getHours();
+  $("#lib-title").textContent = hr < 5 ? "Gute Nacht" : hr < 11 ? "Guten Morgen" : hr < 17 ? "Hallo" : hr < 22 ? "Guten Abend" : "Gute Nacht";
+  if (!q && S.songs.length) {
+    const card = continueCard(S.songs[0]);
+    if (card) list.appendChild(card);
+    list.appendChild(el("div", { class: "lib-section-head" }, [el("span", { text: "Alle Songs" }), el("span", { class: "lib-count", text: String(S.songs.length) })]));
+  }
   for (const s of songs) {
     const tags = el("span", { class: "song-row-tags" }, [
       s.bpm ? el("span", { class: "song-tag", text: `${s.bpm} BPM` }) : null,
@@ -3418,6 +3425,23 @@ function renderLibrary() {
     ]));
   }
   if (q && !songs.length) list.appendChild(el("div", { class: "track-empty", text: `Kein Song mit „${q}“.` }));
+}
+
+/* „Weiter schreiben“: zuletzt bearbeiteter Song, wo du aufgehört hast */
+function continueCard(s) {
+  const blocks = (s.lyrics || []).filter((b) => (b.text || "").trim());
+  if (!blocks.length && !(s.sections || []).length) return null;
+  const last = blocks[blocks.length - 1];
+  const lines = last ? last.text.split("\n").map((x) => x.trim()).filter(Boolean) : [];
+  const meta = [s.bpm ? `${s.bpm} BPM` : "", s.key || ""].filter(Boolean).join(" · ");
+  const card = el("button", { class: "continue-card" }, [
+    el("span", { class: "continue-top" }, [el("span", { class: "continue-kicker", text: "Weiter schreiben" }), meta ? el("span", { class: "continue-meta", text: meta }) : null]),
+    el("span", { class: "continue-title", text: s.name }),
+    songPartsBar(s),
+    last ? el("span", { class: "continue-line" }, [el("b", { text: last.label }), el("span", { text: " · „" + (lines[lines.length - 1] || "").slice(0, 60) + "“" })]) : null,
+  ]);
+  card.addEventListener("click", async () => { haptic(); S.tab = "lyrics"; await openSong(s); });
+  return card;
 }
 
 /* Farbige Leiste mit den Songteilen (für die Song-Liste) */
