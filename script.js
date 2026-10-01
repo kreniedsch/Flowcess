@@ -2872,6 +2872,14 @@ function handleWaveTap(e) {
     return;
   }
   if (S.recording) return;
+  // Doppeltippen = Play/Pause (ab der Stelle des ersten Tipps)
+  const now = performance.now();
+  if (W.lastTap && now - W.lastTap.t < 320 && Math.abs(x - W.lastTap.x) < 40) {
+    W.lastTap = null;
+    togglePlay();
+    return;
+  }
+  W.lastTap = { t: now, x };
   // Sonst: an diese Stelle springen
   seek(xToTime(x, getPos()));
 }
@@ -3178,7 +3186,11 @@ function renderTracks() {
       }
     }
     card.appendChild(actions);
-    list.appendChild(card);
+    list.appendChild(makeSwipeRow(card, [
+      { label: "Trimmen", icon: "scissors", color: "#d6a400", onClick: enterTrimMode },
+      { label: "Ersetzen", icon: "music", color: "#7d5cff", onClick: pickBeat },
+      { label: "Entfernen", icon: "trash", color: "#ff3b4e", onClick: removeBeat },
+    ]));
   } else {
     const add = el("button", { class: "track-add", html: `${ICONS.plus}<span>Beat laden</span>` });
     add.addEventListener("click", pickBeat);
@@ -3248,7 +3260,11 @@ function renderTracks() {
     fader.appendChild(fxBtn);
     const card = el("div", { class: "track-card" + (S.selTakeId === t.id ? " selected" : "") + (muted ? " muted" : "") }, [row, fader]);
     if (fxInfo) card.appendChild(fxInfo);
-    list.appendChild(card);
+    list.appendChild(makeSwipeRow(card, [
+      { label: "FX", icon: "wave", color: "linear-gradient(135deg,#ff5f9e,#b86bff,#45c4ff)", onClick: () => openFxSheet(t.id) },
+      { label: "Teilen", icon: "share", color: "#3a7bff", onClick: () => shareTake(t) },
+      { label: "Löschen", icon: "trash", color: "#ff3b4e", onClick: () => deleteTake(t) },
+    ]));
   });
 }
 
@@ -3387,7 +3403,19 @@ function renderLibrary() {
     row.addEventListener("pointercancel", () => clearTimeout(lp));
     row.addEventListener("contextmenu", (e) => e.preventDefault());
     row.addEventListener("click", () => { if (lp === "done") { lp = null; return; } openSong(s); });
-    list.appendChild(row);
+    list.appendChild(makeSwipeRow(row, [
+      { label: "Umbenennen", icon: "pencil", color: "#7d5cff", onClick: async () => {
+        const v = await sheetPrompt("Song umbenennen", s.name, "Songname");
+        if (v && v.trim()) { s.name = v.trim(); await Store.putSong(s); renderLibrary(); }
+      } },
+      { label: "Löschen", icon: "trash", color: "#ff3b4e", onClick: async () => {
+        const ok = await sheetConfirm("Song löschen?", `„${s.name}“ wird komplett gelöscht.`);
+        if (!ok) return;
+        await Store.deleteSong(s);
+        S.songs = S.songs.filter((x) => x.id !== s.id);
+        renderLibrary();
+      } },
+    ]));
   }
   if (q && !songs.length) list.appendChild(el("div", { class: "track-empty", text: `Kein Song mit „${q}“.` }));
 }
@@ -3483,6 +3511,7 @@ function renderSong() {
   updateMetroButton();
   renderSections();
   renderTagGrid();
+  renderQuickBar();
   renderTracks();
   renderLyrics();
   $("#ideas-text").value = s.notes || "";
@@ -3501,7 +3530,11 @@ function renderChips() {
 }
 
 function setTab(tab) {
+  const prev = S.tab;
   S.tab = tab;
+  const view = tab === "studio" ? $("#view-studio") : $("#view-lyrics");
+  view.classList.remove("in-left", "in-right");
+  if (prev && prev !== tab) { void view.offsetWidth; view.classList.add(tab === "lyrics" ? "in-right" : "in-left"); }
   $$("#song-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("#song-tabs").classList.toggle("right", tab === "lyrics");
   $("#view-studio").classList.toggle("active", tab === "studio");
@@ -3654,7 +3687,17 @@ function renderLyrics() {
       foot,
     ]);
     card.style.setProperty("--c", col);
-    wrap.appendChild(card);
+    wrap.appendChild(makeSwipeRow(card, [
+      { label: "Kopie", icon: "copy", color: "#7d5cff", onClick: () => {
+        const i = s.lyrics.indexOf(block);
+        s.lyrics.splice(i + 1, 0, { ...block, id: uid(), label: block.label + " (Kopie)" });
+        saveSong(); renderLyrics(); requestAnimationFrame(autosizeAll);
+      } },
+      { label: "Löschen", icon: "trash", color: "#ff3b4e", onClick: async () => {
+        if (block.text.trim()) { const ok = await sheetConfirm(`${block.label} löschen?`, "Der Text in diesem Teil wird gelöscht."); if (!ok) return; }
+        s.lyrics = s.lyrics.filter((b) => b !== block); saveSong(); renderLyrics(); requestAnimationFrame(autosizeAll);
+      } },
+    ], { round: 16 }));
   }
 
   // Schnell-Hinzufügen
@@ -4372,6 +4415,7 @@ function toggleLoopQuick() {
   }
   haptic();
   saveSong(); renderSections(); renderAll();
+  updateQuickToggles();
 }
 
 /* ---------- Lyrics-Block-Menü ---------- */
@@ -4773,6 +4817,271 @@ async function importLegacy() {
   } catch (err) { console.warn("Import alte Version", err); }
 }
 
+/* ===================== GESTEN (Wischen, Ziehen, Schnellzugriff) ===================== */
+
+/* Nach links wischen → Aktionen (wie in iOS-Listen) */
+let openSwipe = null;
+function makeSwipeRow(content, actions, opts = {}) {
+  const acts = el("div", { class: "swipe-actions" });
+  const wrap = el("div", { class: "swipe-row" }, [acts, content]);
+  for (const a of actions) {
+    const b = el("button", { class: "swipe-act", html: (ICONS[a.icon] || "") + `<span>${a.label}</span>` });
+    b.style.background = a.color;
+    b.addEventListener("click", (e) => { e.stopPropagation(); closeSwipe(wrap, true); a.onClick(); });
+    acts.appendChild(b);
+  }
+  content.classList.add("swipe-content");
+  if (opts.round) wrap.style.setProperty("--r", opts.round + "px");
+  const W = actions.length * 82 + 8;
+  let st = null;
+  wrap._x = 0;
+  const setX = (x, anim) => {
+    content.style.transition = anim ? "transform .28s cubic-bezier(.2,.8,.2,1)" : "none";
+    content.style.transform = x ? `translateX(${x}px)` : "";
+    acts.style.opacity = x ? String(Math.min(1, -x / 50)) : "0";
+    wrap._x = x;
+  };
+  wrap._close = () => setX(0, true);
+  content.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (e.target.closest(".mf, input, textarea, .fx-btn, .clean-btn")) return;
+    st = { x: e.clientX, y: e.clientY, id: e.pointerId, base: wrap._x, active: false };
+  });
+  content.addEventListener("pointermove", (e) => {
+    if (!st || st.id !== e.pointerId) return;
+    const dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (!st.active) {
+      if (dx > 0 && st.base === 0 && Math.abs(dx) > 6) { st = null; return; }
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        st.active = true;
+        try { content.setPointerCapture(e.pointerId); } catch {}
+        if (openSwipe && openSwipe !== wrap) openSwipe._close();
+      } else if (Math.abs(dy) > 10) { st = null; return; }
+      else return;
+    }
+    let x = st.base + dx;
+    if (x > 0) x = x * 0.2;
+    if (x < -W) x = -W + (x + W) * 0.25;
+    setX(x, false);
+  });
+  const end = () => {
+    if (!st) return;
+    const was = st.active;
+    st = null;
+    if (!was) {
+      // Tippen auf eine offene Zeile = nur schliessen
+      if (wrap._x) { wrap._suppress = true; setX(0, true); }
+      return;
+    }
+    wrap._suppress = true;
+    if (wrap._x < -W * 0.4) { setX(-W, true); openSwipe = wrap; haptic(6); }
+    else { setX(0, true); if (openSwipe === wrap) openSwipe = null; }
+  };
+  content.addEventListener("pointerup", end);
+  content.addEventListener("pointercancel", () => { if (st && st.active) setX(0, true); st = null; });
+  // Klick nach dem Wischen unterdrücken
+  content.addEventListener("click", (e) => {
+    if (wrap._suppress) { wrap._suppress = false; e.stopPropagation(); e.preventDefault(); }
+  }, true);
+  return wrap;
+}
+function closeSwipe(wrap) { if (wrap && wrap._close) wrap._close(); if (openSwipe === wrap) openSwipe = null; }
+
+/* Ist das Ziel etwas, das selbst Wischen/Ziehen braucht? */
+function gestureBlocked(t) {
+  if (t.closest(".mf, .wave-wrap, .overview, .section-strip, .tag-grid, input, .switch, .quick-tags, .sec-edit")) return true;
+  if (t.tagName === "TEXTAREA" && document.activeElement === t) return true;
+  return false;
+}
+
+/* Studio ↔ Lyrics durch Wischen */
+function setupTabSwipe() {
+  for (const view of [$("#view-studio"), $("#view-lyrics")]) {
+    let st = null;
+    const reset = () => {
+      view.style.transition = "transform .25s cubic-bezier(.2,.8,.2,1), opacity .25s";
+      view.style.transform = ""; view.style.opacity = "";
+      setTimeout(() => { view.style.transition = ""; }, 260);
+    };
+    view.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse" || gestureBlocked(e.target)) return;
+      st = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false, onRow: !!e.target.closest(".swipe-row") };
+    });
+    view.addEventListener("pointermove", (e) => {
+      if (!st || st.id !== e.pointerId) return;
+      const dx = e.clientX - st.x, dy = e.clientY - st.y;
+      if (!st.active) {
+        // Auf Spuren/Blöcken gehört Wischen nach links den Schnell-Aktionen
+        if (st.onRow && dx < -6) { st = null; return; }
+        if (st.onRow && openSwipe) { st = null; return; }
+        if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy) * 1.7) st.active = true;
+        else if (Math.abs(dy) > 14) { st = null; return; }
+        else return;
+      }
+      const dir = view.id === "view-studio" ? -1 : 1;
+      const v = Math.sign(dx) === dir ? dx : dx * 0.15;
+      view.style.transition = "none";
+      view.style.transform = `translateX(${v * 0.45}px)`;
+      view.style.opacity = String(1 - Math.min(0.5, Math.abs(v) / 500));
+    });
+    view.addEventListener("pointerup", (e) => {
+      if (!st) return;
+      const dx = e.clientX - st.x, active = st.active;
+      st = null;
+      reset();
+      if (!active) return;
+      if (view.id === "view-studio" && dx < -60) { haptic(6); setTab("lyrics"); }
+      else if (view.id === "view-lyrics" && dx > 60) { haptic(6); setTab("studio"); }
+    });
+    view.addEventListener("pointercancel", () => { if (st && st.active) reset(); st = null; });
+  }
+}
+
+/* Vom linken Rand wischen = zurück zur Song-Liste */
+function setupEdgeBack() {
+  const scr = $("#screen-song");
+  let st = null;
+  scr.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" || S.liveOpen) return;
+    const r = scr.getBoundingClientRect();
+    if (e.clientX - r.left > 22) return;
+    st = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false };
+    e.stopPropagation();
+  }, true);
+  scr.addEventListener("pointermove", (e) => {
+    if (!st || st.id !== e.pointerId) return;
+    const dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (!st.active) {
+      if (dx > 12 && dx > Math.abs(dy)) { st.active = true; try { scr.setPointerCapture(e.pointerId); } catch {} }
+      else if (Math.abs(dy) > 12) { st = null; return; }
+      else return;
+    }
+    scr.style.transition = "none";
+    scr.style.transform = `translateX(${Math.max(0, dx)}px)`;
+    e.stopPropagation();
+  }, true);
+  const end = (e) => {
+    if (!st) return;
+    const dx = e.clientX - st.x, active = st.active;
+    st = null;
+    scr.style.transition = "";
+    scr.style.transform = "";
+    if (active && dx > 90) { haptic(8); closeSong(); }
+  };
+  scr.addEventListener("pointerup", end, true);
+  scr.addEventListener("pointercancel", () => { st = null; scr.style.transition = ""; scr.style.transform = ""; }, true);
+}
+
+/* Menüs nach unten wegwischen */
+function setupSheetSwipe() {
+  const sh = $("#sheet");
+  let st = null;
+  sh.addEventListener("pointerdown", (e) => {
+    const r = sh.getBoundingClientRect();
+    if (e.clientY - r.top > 56 || sh.scrollTop > 0) return;
+    st = { y: e.clientY, id: e.pointerId, active: false };
+  });
+  sh.addEventListener("pointermove", (e) => {
+    if (!st || st.id !== e.pointerId) return;
+    const dy = e.clientY - st.y;
+    if (!st.active) { if (dy > 8) { st.active = true; try { sh.setPointerCapture(e.pointerId); } catch {} } else return; }
+    sh.style.transition = "none";
+    sh.style.transform = `translateY(${Math.max(0, dy)}px)`;
+  });
+  const end = (e) => {
+    if (!st) return;
+    const dy = e.clientY - st.y, active = st.active;
+    st = null;
+    sh.style.transition = "transform .25s"; sh.style.transform = "";
+    setTimeout(() => { sh.style.transition = ""; }, 260);
+    if (active && dy > 100) closeSheet(null);
+  };
+  sh.addEventListener("pointerup", end);
+  sh.addEventListener("pointercancel", () => { st = null; sh.style.transform = ""; });
+}
+
+/* Schnell-Leiste im Dock: nach oben wischen */
+function renderQuickBar() {
+  const box = $("#quick-tags");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const type of ["intro", "verse", "pre", "hook", "bridge", "outro"]) {
+    const b = el("button", { class: "q-tag", text: SECTION_TYPES[type].label });
+    b.style.setProperty("--c", typeColor(type));
+    b.addEventListener("click", () => { flash(b); addSectionAt(type); });
+    box.appendChild(b);
+  }
+  updateQuickToggles();
+}
+function updateQuickToggles() {
+  const s = S.song;
+  $("#q-loop").classList.toggle("on", !!(s && s.loopSectionId));
+  $("#q-countin").classList.toggle("on", !!Settings.countIn);
+  $("#q-follow").classList.toggle("on", !!Settings.follow);
+  $("#q-snap").classList.toggle("on", !!(s && s.snap !== false && beatLen()));
+}
+function setQuickOpen(open) {
+  Settings.quickOpen = open; saveSettings();
+  $("#dock").classList.toggle("quick-open", open);
+  document.documentElement.style.setProperty("--dock-h", open ? "232px" : "132px");
+  if (open) renderQuickBar();
+}
+function setupDockSwipe() {
+  const dock = $("#dock");
+  let st = null;
+  dock.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".quick-tags")) return;
+    st = { y: e.clientY, x: e.clientX, id: e.pointerId, active: false };
+  });
+  dock.addEventListener("pointermove", (e) => {
+    if (!st || st.id !== e.pointerId) return;
+    const dy = e.clientY - st.y;
+    if (!st.active && Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(e.clientX - st.x)) st.active = true;
+  });
+  dock.addEventListener("pointerup", (e) => {
+    if (!st) return;
+    const dy = e.clientY - st.y, active = st.active;
+    st = null;
+    if (!active) return;
+    if (dy < -24 && !Settings.quickOpen) { haptic(6); setQuickOpen(true); }
+    else if (dy > 24 && Settings.quickOpen) { haptic(6); setQuickOpen(false); }
+  });
+  dock.addEventListener("pointercancel", () => { st = null; });
+  $("#dock-grab").addEventListener("click", () => { haptic(4); setQuickOpen(!Settings.quickOpen); });
+  $("#q-loop").addEventListener("click", () => { toggleLoopQuick(); updateQuickToggles(); });
+  $("#q-countin").addEventListener("click", () => {
+    Settings.countIn = !Settings.countIn; saveSettings(); updateQuickToggles(); haptic(4);
+    toast(Settings.countIn ? "Einzählen an (1 Takt)" : "Einzählen aus", 1200);
+  });
+  $("#q-follow").addEventListener("click", () => {
+    Settings.follow = !Settings.follow; saveSettings(); updateQuickToggles(); haptic(4);
+    $("#lyr-follow").classList.toggle("on", Settings.follow);
+    toast(Settings.follow ? "Lyrics scrollen mit" : "Mitscrollen aus", 1200);
+  });
+  $("#q-snap").addEventListener("click", () => {
+    const s = S.song;
+    if (!s || !beatLen()) { toast("Kein Tempo – Raster geht erst mit BPM"); return; }
+    s.snap = s.snap === false; saveSong(); updateQuickToggles(); haptic(4);
+    toast(s.snap ? "Tags rasten am Takt ein" : "Tags frei setzen", 1200);
+  });
+  if (Settings.quickOpen) setQuickOpen(true);
+}
+
+/* Live-Modus: wischen = Teil wechseln, tippen = Play/Pause */
+function setupLiveGestures() {
+  const body = $("#live-body");
+  let st = null;
+  body.addEventListener("pointerdown", (e) => { st = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId }; });
+  body.addEventListener("pointerup", (e) => {
+    if (!st || st.id !== e.pointerId) return;
+    const dx = e.clientX - st.x, dy = e.clientY - st.y, dt = performance.now() - st.t;
+    st = null;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { liveJump(dx < 0 ? 1 : -1); return; }
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8 && dt < 350) { haptic(5); togglePlay(); }
+  });
+  body.addEventListener("pointercancel", () => { st = null; });
+}
+
 function bindUI() {
   // Ton beim allerersten Tipp irgendwo freischalten
   const firstTouch = () => {
@@ -4959,6 +5268,11 @@ async function boot() {
   W.ovCtx = W.ov.getContext("2d");
   bindUI();
   setupWaveGestures();
+  setupTabSwipe();
+  setupEdgeBack();
+  setupSheetSwipe();
+  setupDockSwipe();
+  setupLiveGestures();
   await Store.open();
   await importLegacy();
   await loadSongs();

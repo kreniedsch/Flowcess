@@ -199,6 +199,16 @@
 
     <!-- ---------- DOCK (beide Tabs) ---------- -->
     <footer class="dock" id="dock">
+      <button class="dock-grab" id="dock-grab" aria-label="Schnell-Leiste"></button>
+      <div class="quick" id="quick">
+        <div class="quick-tags" id="quick-tags"></div>
+        <div class="quick-toggles">
+          <button id="q-loop"><svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg>Loop</button>
+          <button id="q-countin"><svg viewBox="0 0 24 24"><path d="M9 3h6l4 18H5z"/><path d="M12 15 17 6"/></svg>Einzählen</button>
+          <button id="q-snap"><svg viewBox="0 0 24 24"><path d="M6 3v8a6 6 0 0 0 12 0V3"/><path d="M6 7h4M14 7h4"/></svg>Takt</button>
+          <button id="q-follow"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>Mitscrollen</button>
+        </div>
+      </div>
       <div class="now-bar" id="now-bar">
         <span class="now-dot" id="now-dot"></span>
         <span class="now-section" id="now-section">Kein Teil</span>
