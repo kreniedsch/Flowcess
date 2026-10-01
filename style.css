@@ -872,3 +872,10 @@ input[type=range].center-zero::-webkit-slider-runnable-track {
 .ai-status.ok { color: #4cd964; } .ai-status.bad { color: #ff6b7a; }
 
 .ai-key-input { -webkit-text-security: disc; }
+
+/* Loop */
+#chip-loop.on, #q-loop.on { color: #2b2100 !important; background: #ffd60a !important; border-color: #ffd60a !important; box-shadow: 0 6px 18px rgba(255,214,10,.35); }
+.loop-pick { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+.loop-pick button { display: inline-flex; align-items: center; gap: 8px; padding: 11px 15px; border-radius: 14px; background: var(--glass-2); border: 1px solid var(--stroke); font-size: 15px; font-weight: 700; color: var(--label); }
+.loop-pick button i { width: 9px; height: 9px; border-radius: 50%; }
+.loop-pick button.sel { background: rgba(255,214,10,.16); border-color: #ffd60a; color: #ffe680; }

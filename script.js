@@ -534,11 +534,8 @@ async function togglePlay() {
   const d = songDuration();
   if (d <= 0) { toast("Noch nichts zum Abspielen – lade einen Beat oder nimm auf."); return; }
   if (S.pos >= d - 0.05) S.pos = 0;
-  const loopSec = getLoopSection();
-  if (loopSec) {
-    const r = sectionRange(loopSec);
-    if (S.pos < r.start || S.pos >= r.end) S.pos = r.start;
-  }
+  const lr = loopRange();
+  if (lr && (S.pos < lr.start || S.pos >= lr.end)) S.pos = lr.start;
   haptic();
   await play(S.pos);
 }
@@ -671,11 +668,8 @@ function startLoop() {
     const d = songDuration();
 
     // Loop-Teil
-    const loopSec = getLoopSection();
-    if (loopSec && !S.recording) {
-      const r = sectionRange(loopSec);
-      if (pos >= r.end - 0.01) { play(r.start); return; }
-    }
+    const lr = loopRange();
+    if (lr && !S.recording && pos >= lr.end - 0.01) { play(lr.start); return; }
     // Ende erreicht
     if (!S.recording && pos >= d && d > 0) {
       pause();
@@ -2499,6 +2493,39 @@ function drawWave(pos = getPos()) {
     if (xa > 60) g.fillText("wird abgeschnitten", Math.max(6, xa / 2 - 44), yBeat + 6);
   }
 
+  // --- Loop-Balken (gelb) ---
+  W.cycleHit = null;
+  const lr = loopRange();
+  if (lr) {
+    const lx0 = timeToX(lr.start, pos), lx1 = timeToX(lr.end, pos);
+    if (lx1 > -20 && lx0 < W.w + 20) {
+      const Y = "255,214,10";
+      g.fillStyle = `rgba(${Y},.07)`;
+      g.fillRect(lx0, yFlags, lx1 - lx0, W.h - yFlags);
+      g.fillStyle = `rgba(${Y},.55)`;
+      g.fillRect(Math.round(lx0), yFlags, 1.5, W.h - yFlags);
+      g.fillRect(Math.round(lx1) - 1.5, yFlags, 1.5, W.h - yFlags);
+      g.fillStyle = `rgb(${Y})`;
+      roundRect(g, lx0, 2, Math.max(4, lx1 - lx0), W.rulerH - 5, 6); g.fill();
+      // Griffe
+      g.fillStyle = "rgba(60,45,0,.55)";
+      for (const hx of [lx0 + 7, lx1 - 7]) { g.fillRect(hx - 2, 7, 1.4, W.rulerH - 15); g.fillRect(hx + 1, 7, 1.4, W.rulerH - 15); }
+      // Beschriftung
+      const spb = beatLen();
+      const lenTxt = spb ? `${Math.round((lr.end - lr.start) / (spb * 4))} Takte` : fmtTime(lr.end - lr.start);
+      const txt = `⟲ Loop · ${lenTxt}`;
+      g.font = "800 11px -apple-system, system-ui, sans-serif";
+      g.textBaseline = "middle";
+      const tw = g.measureText(txt).width;
+      if (lx1 - lx0 > tw + 30) {
+        g.fillStyle = "#2b2100";
+        const tx = clamp((lx0 + lx1) / 2 - tw / 2, Math.max(lx0 + 14, 4), Math.min(lx1 - 14 - tw, W.w - tw - 4));
+        g.fillText(txt, tx, 2 + (W.rulerH - 5) / 2 + 0.5);
+      }
+      W.cycleHit = { x0: lx0, x1: lx1 };
+    }
+  }
+
   // --- Playhead (Mitte) ---
   const cx = Math.round(W.w / 2);
   const phCol = S.recording ? "#ff3b4e" : "#ffffff";
@@ -2692,6 +2719,14 @@ function drawOverview(pos = getPos()) {
     g.fillStyle = hexA(t.color || TAKE_COLORS[0], t.muted ? 0.3 : 0.9);
     g.fillRect(t.offset * k, W.ovH - 8, Math.max(2, (t.duration || 0) * k), 3);
   }
+  // Loop-Bereich (gelb)
+  const lrO = loopRange();
+  if (lrO) {
+    g.fillStyle = "rgba(255,214,10,.16)";
+    g.fillRect(lrO.start * k, 0, (lrO.end - lrO.start) * k, W.ovH - 4);
+    g.fillStyle = "#ffd60a";
+    roundRect(g, lrO.start * k, 0, Math.max(3, (lrO.end - lrO.start) * k), 3, 1.5); g.fill();
+  }
   // sichtbarer Bereich
   const vw = (W.w / S.pps) * k;
   const vx = pos * k - vw / 2;
@@ -2721,6 +2756,41 @@ function roundRect(g, x, y, w, h, r) {
 }
 
 /* ---------- Gesten: Wischen = spulen, 2 Finger = zoomen, Tippen = auswählen ---------- */
+function moveCycle(e) {
+  const cd = W.cdrag, s = S.song;
+  if (!cd || !s || !s.cycle) return;
+  const r = W.canvas.getBoundingClientRect();
+  const nowPos = S.playing ? getPos() : cd.pos;
+  const t = xToTime(e.clientX - r.left, nowPos);
+  const d = Math.max(songDuration(), 0.1);
+  const spb = beatLen();
+  const snapOn = s.snap !== false && spb;
+  const minLen = snapOn ? spb * 4 : 0.5;
+  // Einrasten: Takt, und Songteil-Grenzen als Magnet
+  const magnet = (x) => {
+    let v = snapOn ? snapToBar(x) : x;
+    for (const sec of sortedSections()) {
+      for (const b of [sec.time, sectionRange(sec).end]) if (Math.abs((b - x) * S.pps) < 12) v = b;
+    }
+    if (Math.abs((d - x) * S.pps) < 12) v = d;
+    return v;
+  };
+  let a = cd.s0, z = cd.e0;
+  if (cd.which === "start") a = clamp(magnet(t), 0, z - minLen);
+  else if (cd.which === "end") z = clamp(magnet(t), a + minLen, d);
+  else {
+    const len = cd.e0 - cd.s0;
+    let na = magnet(cd.s0 + (e.clientX - cd.cx) / S.pps);
+    na = clamp(na, 0, Math.max(0, d - len));
+    a = na; z = na + len;
+  }
+  if (a !== s.cycle.start || z !== s.cycle.end) {
+    if (snapOn && (Math.abs(a - s.cycle.start) > 0.01 || Math.abs(z - s.cycle.end) > 0.01)) haptic(4);
+    s.cycle.start = a; s.cycle.end = z;
+  }
+  renderFrame(S.playing ? getPos() : S.pos);
+}
+
 function setupWaveGestures() {
   const c = W.canvas;
   let wasPlaying = false;
@@ -2737,6 +2807,25 @@ function setupWaveGestures() {
       return;
     }
     if (S.recording) { W.drag = { tapOnly: true, x: e.clientX, y: e.clientY, moved: false }; return; }
+    // Loop-Balken anfassen? (oben in der Zeitleiste)
+    if (W.cycleHit && !S.trimMode && !S.editSecId) {
+      const r = c.getBoundingClientRect();
+      const lx = e.clientX - r.left, ly = e.clientY - r.top;
+      const h = W.cycleHit;
+      if (ly <= W.rulerH + 12 && lx >= h.x0 - 24 && lx <= h.x1 + 24) {
+        const lr = loopRange();
+        let which = "move";
+        if (Math.abs(lx - h.x0) < 24 && Math.abs(lx - h.x0) <= Math.abs(lx - h.x1)) which = "start";
+        else if (Math.abs(lx - h.x1) < 24) which = "end";
+        const s = S.song;
+        s.loopSectionId = null; // ab jetzt freier Loop
+        s.cycle = { on: true, start: lr.start, end: lr.end };
+        W.cdrag = { which, pos: getPos(), cx: e.clientX, s0: lr.start, e0: lr.end };
+        W.drag = null;
+        haptic(8);
+        return;
+      }
+    }
     // Trimm-Griff anfassen?
     if (S.trimMode) {
       const r = c.getBoundingClientRect();
@@ -2798,6 +2887,7 @@ function setupWaveGestures() {
       return;
     }
     if (W.hdrag) { moveHandle(e); return; }
+    if (W.cdrag) { moveCycle(e); return; }
     const dr = W.drag;
     if (!dr) return;
     const dx = e.clientX - dr.x;
@@ -2819,6 +2909,12 @@ function setupWaveGestures() {
     W.pointers.delete(e.pointerId);
     if (W.pinch) {
       if (W.pointers.size < 2) W.pinch = null;
+      return;
+    }
+    if (W.cdrag) {
+      W.cdrag = null;
+      haptic(6);
+      saveSong(); renderSections(); renderAll(); updateQuickToggles();
       return;
     }
     if (W.hdrag) {
@@ -3216,6 +3312,16 @@ function sectionAt(t) {
   for (const s of list) { if (s.time <= t + 0.001) cur = s; else break; }
   return cur;
 }
+/* Aktiver Loop-Bereich: gelber Loop-Balken (frei) oder ein einzelner Songteil */
+function loopRange() {
+  const s = S.song;
+  if (!s) return null;
+  const sec = getLoopSection();
+  if (sec) return sectionRange(sec);
+  const c = s.cycle;
+  if (c && c.on && c.end > c.start + 0.05) return { start: Math.max(0, c.start), end: c.end };
+  return null;
+}
 function getLoopSection() {
   const s = S.song;
   if (!s || !s.loopSectionId) return null;
@@ -3268,7 +3374,7 @@ function renderSections() {
     chip.addEventListener("contextmenu", (e) => e.preventDefault());
     strip.appendChild(chip);
   }
-  $("#chip-loop").classList.toggle("on", !!getLoopSection());
+  $("#chip-loop").classList.toggle("on", !!loopRange());
 }
 
 function jumpToSection(id) {
@@ -3667,7 +3773,7 @@ async function loadSongs() {
   S.songs = (await Store.allSongs()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-const APP_VERSION = "202610012304";
+const APP_VERSION = "202610012314";
 function renderLibrary() {
   const list = $("#lib-list");
   const q = ($("#lib-search").value || "").trim().toLowerCase();
@@ -5064,16 +5170,84 @@ function openTagMenu() {
 
 function toggleLoopQuick() {
   const s = S.song;
-  if (s.loopSectionId) { s.loopSectionId = null; toast("Wiederholen aus"); }
-  else {
-    const sec = sectionAt(getPos());
-    if (!sec) { toast("Setze zuerst Songteile – dann kannst du einen Teil wiederholen."); return; }
-    s.loopSectionId = sec.id;
-    toast(`${sec.label} wird wiederholt`);
+  if (loopRange()) {
+    s.loopSectionId = null;
+    if (s.cycle) s.cycle.on = false;
+    toast("Loop aus", 1200);
+  } else {
+    const d = songDuration();
+    if (d <= 0.2) { toast("Noch nichts zum Loopen – lade einen Beat oder nimm auf."); return; }
+    let r = null;
+    const c = s.cycle;
+    if (c && c.end > c.start + 0.1 && c.start < d) r = { start: c.start, end: Math.min(c.end, d) };
+    if (!r) {
+      const sec = sectionAt(getPos());
+      if (sec) r = sectionRange(sec);
+      else {
+        const spb = beatLen();
+        const st = spb ? snapToBar(Math.max(0, getPos())) : Math.max(0, getPos() - 1);
+        r = { start: st, end: Math.min(d, st + (spb ? spb * 16 : 8)) };
+      }
+    }
+    s.cycle = { on: true, start: r.start, end: r.end };
+    fitLoopInView();
+    toast("Loop an · zieh den gelben Balken oben", 2200);
   }
   haptic();
   saveSong(); renderSections(); renderAll();
   updateQuickToggles();
+}
+
+/* Ganzen Loop sichtbar machen: an den Anfang springen und rauszoomen, falls nötig */
+function fitLoopInView() {
+  const lr = loopRange();
+  if (!lr || !W.w) return;
+  if (!S.playing) S.pos = lr.start;
+  const need = (W.w / 2 - 28) / Math.max(0.5, lr.end - lr.start);
+  if (need < S.pps) setZoom(need);
+}
+
+/* Loop-Bereich aus Songteilen wählen (lange auf den Loop-Knopf drücken) */
+function openLoopSheet() {
+  const s = S.song;
+  const secs = sortedSections();
+  openSheet((root) => {
+    sheetHeader(root, "Loop-Bereich", secs.length ? "Tippe die Teile an, die geloopt werden sollen – z. B. Verse + Hook." : "Noch keine Songteile. Zieh einfach den gelben Balken in der Zeitleiste.");
+    const box = el("div", { class: "loop-pick" });
+    const cur = loopRange();
+    // Vorauswahl nur, wenn der Loop genau auf Songteil-Grenzen liegt
+    let pre = cur ? secs.filter((x) => { const r = sectionRange(x); return r.start >= cur.start - 0.05 && r.end <= cur.end + 0.05; }) : [];
+    if (pre.length && (Math.abs(sectionRange(pre[0]).start - cur.start) > 0.05 || Math.abs(sectionRange(pre[pre.length - 1]).end - cur.end) > 0.05)) pre = [];
+    const sel = new Set(pre.map((x) => x.id));
+    const draw = () => {
+      box.innerHTML = "";
+      secs.forEach((sec) => {
+        const b = el("button", { class: sel.has(sec.id) ? "sel" : "" }, [el("i", { style: { background: typeColor(sec.type) } }), el("span", { text: sec.label })]);
+        b.addEventListener("click", () => {
+          haptic();
+          if (sel.has(sec.id)) sel.delete(sec.id); else sel.add(sec.id);
+          // Lücken füllen: alles zwischen dem ersten und letzten gewählten Teil
+          const idx = secs.map((x, i) => (sel.has(x.id) ? i : -1)).filter((i) => i >= 0);
+          if (idx.length) {
+            const a = Math.min(...idx), z = Math.max(...idx);
+            sel.clear(); for (let i = a; i <= z; i++) sel.add(secs[i].id);
+            s.loopSectionId = null;
+            s.cycle = { on: true, start: sectionRange(secs[a]).start, end: sectionRange(secs[z]).end };
+          } else if (s.cycle) s.cycle.on = false;
+          fitLoopInView();
+          saveSong(); renderSections(); renderAll(); updateQuickToggles(); draw();
+        });
+        box.appendChild(b);
+      });
+    };
+    draw();
+    root.appendChild(box);
+    const off = el("button", { text: "Loop aus" });
+    off.addEventListener("click", () => { s.loopSectionId = null; if (s.cycle) s.cycle.on = false; saveSong(); renderSections(); renderAll(); updateQuickToggles(); closeSheet(null); });
+    const done = el("button", { class: "primary", text: "Fertig" });
+    done.addEventListener("click", () => closeSheet(null));
+    root.appendChild(el("div", { class: "sheet-row" }, [off, done]));
+  });
 }
 
 /* ---------- Lyrics-Block-Menü ---------- */
@@ -5676,7 +5850,7 @@ function renderQuickBar() {
 }
 function updateQuickToggles() {
   const s = S.song;
-  $("#q-loop").classList.toggle("on", !!(s && s.loopSectionId));
+  $("#q-loop").classList.toggle("on", !!(s && loopRange()));
   $("#q-countin").classList.toggle("on", !!Settings.countIn);
   $("#q-follow").classList.toggle("on", !!Settings.follow);
   $("#q-snap").classList.toggle("on", !!(s && s.snap !== false && beatLen()));
@@ -5789,7 +5963,14 @@ function bindUI() {
   $$("#song-tabs button").forEach((b) => b.addEventListener("click", () => { haptic(4); setTab(b.dataset.tab); }));
   $("#chip-bpm").addEventListener("click", openBpmSheet);
   $("#chip-key").addEventListener("click", openKeySheet);
-  $("#chip-loop").addEventListener("click", toggleLoopQuick);
+  {
+    const lb = $("#chip-loop");
+    let lp = null;
+    lb.addEventListener("pointerdown", () => { lp = setTimeout(() => { lp = "done"; haptic(12); openLoopSheet(); }, 450); });
+    lb.addEventListener("pointerup", () => { if (lp !== "done") { clearTimeout(lp); toggleLoopQuick(); } lp = null; });
+    lb.addEventListener("pointercancel", () => { clearTimeout(lp); lp = null; });
+    lb.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
   $("#wave-empty-beat").addEventListener("click", pickBeat);
   $("#btn-play").addEventListener("click", togglePlay);
   $("#dock-play").addEventListener("click", togglePlay);
