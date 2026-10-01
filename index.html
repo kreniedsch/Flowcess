@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Flowcess" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <title>Flowcess</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<!-- ===================== FLOWCESS v2 · Sprachmemo-Stil ===================== -->
+<div id="app">
+
+  <!-- ============ SCREEN 1: SONG-LISTE ============ -->
+  <section id="screen-library" class="screen active">
+    <header class="lib-header">
+      <div class="lib-topbar">
+        <span class="lib-brand">Flowcess</span>
+        <button class="icon-btn accent" id="lib-new-btn" aria-label="Neuer Song">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <h1 class="large-title">Alle Songs</h1>
+      <label class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="lib-search" type="search" placeholder="Suchen" autocomplete="off" />
+      </label>
+    </header>
+
+    <div id="lib-list" class="lib-list"></div>
+
+    <div id="lib-empty" class="lib-empty hidden">
+      <div class="lib-empty-icon"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg></div>
+      <p class="lib-empty-title">Noch keine Songs</p>
+      <p class="lib-empty-text">Tippe auf den roten Knopf für eine schnelle Aufnahme – oder lade zuerst einen Beat.</p>
+      <div class="lib-empty-btns">
+        <button class="pill-btn" id="lib-empty-beat">Beat laden</button>
+        <button class="pill-btn ghost" id="lib-empty-demo">Demo-Song ansehen</button>
+      </div>
+    </div>
+
+    <footer class="lib-dock">
+      <button class="rec-btn" id="lib-rec-btn" aria-label="Schnell aufnehmen"><span class="rec-inner"></span></button>
+    </footer>
+  </section>
+
+  <!-- ============ SCREEN 2: SONG ============ -->
+  <section id="screen-song" class="screen">
+    <header class="nav">
+      <button class="nav-back" id="song-back"><svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg><span>Songs</span></button>
+      <button class="nav-title" id="song-title">Song</button>
+      <button class="icon-btn" id="song-menu-btn" aria-label="Menü">
+        <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      </button>
+    </header>
+
+    <div class="segmented" id="song-tabs">
+      <button data-tab="studio" class="active">Studio</button>
+      <button data-tab="lyrics">Lyrics</button>
+      <span class="seg-thumb"></span>
+    </div>
+
+    <!-- ---------- STUDIO ---------- -->
+    <div class="tab-view active" id="view-studio">
+      <div class="chip-row">
+        <button class="chip" id="chip-bpm"><span class="chip-val" id="bpm-val">– </span><span class="chip-unit">BPM</span></button>
+        <button class="chip" id="chip-key"><span class="chip-val" id="key-val">–</span><span class="chip-unit">Tonart</span></button>
+        <span class="flex1"></span>
+        <button class="chip chip-icon" id="chip-loop" aria-label="Teil wiederholen">
+          <svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg>
+        </button>
+      </div>
+
+      <div class="wave-wrap" id="wave-wrap">
+        <canvas id="wave-canvas"></canvas>
+        <div class="wave-empty hidden" id="wave-empty">
+          <p>Lade einen Beat oder nimm direkt auf.</p>
+          <button class="pill-btn" id="wave-empty-beat">Beat laden</button>
+        </div>
+        <div class="zoom-badge" id="zoom-badge"></div>
+      </div>
+      <canvas id="overview-canvas" class="overview"></canvas>
+
+      <div class="sec-edit trim-edit hidden" id="trim-edit">
+        <div class="sec-edit-top">
+          <span class="sec-edit-dot"></span>
+          <span class="sec-edit-name plain">Beat trimmen</span>
+          <span class="flex1"></span>
+          <button id="trim-snap" class="snap-top" aria-label="Einrasten"><svg viewBox="0 0 24 24"><path d="M6 3v8a6 6 0 0 0 12 0V3"/><path d="M6 7h4M14 7h4"/></svg><span>Frei</span></button>
+          <button class="sec-edit-done" id="trim-done">Fertig</button>
+        </div>
+        <div class="trim-vals">
+          <div><small>Anfang</small><b id="trim-start-val">0:00</b></div>
+          <div><small>Ende</small><b id="trim-end-val">voll</b></div>
+          <div><small>Länge</small><b id="trim-len-val">0:00</b></div>
+        </div>
+        <div class="sec-edit-btns">
+          <button id="trim-auto">Stille entfernen</button>
+          <button id="trim-one">Auf die 1</button>
+          <button id="trim-reset">Zurücksetzen</button>
+        </div>
+        <p class="sec-edit-hint">Ziehe die gelben Griffe links und rechts – frei oder auf Schläge („Schlag“). Takes und Songteile bleiben am Beat.</p>
+      </div>
+      <div class="sec-edit hidden" id="sec-edit">
+        <div class="sec-edit-top">
+          <span class="sec-edit-dot"></span>
+          <button class="sec-edit-name" id="sec-edit-name">Verse</button>
+          <span class="sec-edit-range" id="sec-edit-range"></span>
+          <span class="flex1"></span>
+          <button class="sec-edit-done" id="sec-edit-done">Fertig</button>
+        </div>
+        <div class="sec-edit-btns">
+          <button id="sec-edit-snap" class="snap" aria-label="Einrasten"><svg viewBox="0 0 24 24"><path d="M6 3v8a6 6 0 0 0 12 0V3"/><path d="M6 7h4M14 7h4"/></svg><span>Takt</span></button>
+          <button id="sec-edit-prev" aria-label="früher"><svg viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>1 Takt</button>
+          <button id="sec-edit-next" aria-label="1 Takt später">1 Takt<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+        </div>
+        <div class="sec-edit-btns">
+          <button id="sec-edit-loop" aria-label="Wiederholen"><svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg>Loop</button>
+          <button id="sec-edit-more" aria-label="Mehr"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>Mehr</button>
+          <button id="sec-edit-del" class="danger" aria-label="Löschen"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M9 7V4h6v3"/></svg>Löschen</button>
+        </div>
+        <p class="sec-edit-hint" id="sec-edit-hint">Ziehe die runden Griffe in der Waveform, um Anfang und Ende zu verschieben.</p>
+      </div>
+
+      <div class="time-block">
+        <div class="big-time" id="big-time">00:00,00</div>
+        <div class="time-sub" id="time-sub">&nbsp;</div>
+      </div>
+
+      <div class="transport">
+        <button class="t-btn" id="btn-back15" aria-label="15 Sekunden zurück">
+          <svg viewBox="0 0 32 32"><path d="M9 7a11 11 0 1 1-4 8.5"/><path d="M9 2v5.5H3.5"/><text x="16" y="20" text-anchor="middle">15</text></svg>
+        </button>
+        <button class="t-btn t-play" id="btn-play" aria-label="Abspielen">
+          <svg class="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg>
+        </button>
+        <button class="t-btn" id="btn-fwd15" aria-label="15 Sekunden vor">
+          <svg viewBox="0 0 32 32"><path d="M23 7a11 11 0 1 0 4 8.5"/><path d="M23 2v5.5h5.5"/><text x="16" y="20" text-anchor="middle">15</text></svg>
+        </button>
+      </div>
+
+      <div class="block">
+        <div class="block-head">
+          <h2>Songteile</h2>
+          <button class="text-btn" id="tag-menu-btn">Bearbeiten</button>
+        </div>
+        <div class="section-strip" id="section-strip"></div>
+        <div class="tag-grid" id="tag-grid"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h2>Spuren</h2></div>
+        <div class="track-list" id="track-list"></div>
+      </div>
+      <div class="dock-spacer"></div>
+    </div>
+
+    <!-- ---------- LYRICS ---------- -->
+    <div class="tab-view" id="view-lyrics">
+      <div class="lyr-toolbar">
+        <div class="mini-seg" id="lyr-seg">
+          <button data-sub="lyrics" class="active">Lyrics</button>
+          <button data-sub="ideas">Ideen</button>
+        </div>
+        <span class="flex1"></span>
+        <button class="chip chip-icon" id="lyr-follow" aria-label="Mitlaufen" title="Beim Abspielen mitscrollen">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>
+        </button>
+        <button class="chip chip-icon" id="lyr-more" aria-label="Mehr">
+          <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        </button>
+        <button class="live-btn" id="lyr-live-btn">
+          <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 18 0"/><path d="M7 12a5 5 0 0 1 10 0"/><circle cx="12" cy="12" r="1.8"/></svg>
+          Live
+        </button>
+      </div>
+
+      <div id="lyr-pane-lyrics">
+        <div class="lyr-sync-hint hidden" id="lyr-sync-hint"></div>
+        <div id="lyr-blocks" class="lyr-blocks"></div>
+        <div class="lyr-add">
+          <p class="lyr-add-label">Teil hinzufügen</p>
+          <div class="lyr-add-row" id="lyr-add-row"></div>
+        </div>
+      </div>
+
+      <div id="lyr-pane-ideas" class="hidden">
+        <textarea id="ideas-text" class="ideas-text" placeholder="Ideen, Reime, Flows, Punchlines …"></textarea>
+      </div>
+      <div class="dock-spacer"></div>
+    </div>
+
+    <!-- ---------- DOCK (beide Tabs) ---------- -->
+    <footer class="dock" id="dock">
+      <div class="now-bar" id="now-bar">
+        <span class="now-dot" id="now-dot"></span>
+        <span class="now-section" id="now-section">Kein Teil</span>
+        <span class="flex1"></span>
+        <span class="now-time" id="now-time">0:00</span>
+      </div>
+      <div class="rec-meter hidden" id="rec-meter">
+        <span class="rec-meter-label" id="rec-meter-label">REC 0:00</span>
+        <div class="meter"><div class="meter-fill" id="rec-meter-fill"></div><div class="meter-peak" id="rec-meter-peak"></div></div>
+        <span class="rec-meter-db" id="rec-meter-db">–∞ dB</span>
+      </div>
+      <div class="dock-row">
+        <button class="dock-side" id="dock-play" aria-label="Abspielen">
+          <svg class="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg>
+        </button>
+        <button class="rec-btn" id="rec-btn" aria-label="Aufnehmen"><span class="rec-inner"></span></button>
+        <button class="dock-side metro" id="dock-metro" aria-label="Metronom">
+          <svg viewBox="0 0 24 24"><path d="M9 3h6l4 18H5z"/><path d="M12 15 17 6"/><path d="M7.5 16h9"/></svg>
+        </button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ============ LIVE-MODUS ============ -->
+  <section id="live" class="live hidden">
+    <header class="live-top">
+      <button class="icon-btn" id="live-close" aria-label="Schliessen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <div class="live-head">
+        <span class="live-section" id="live-section">–</span>
+        <span class="live-next" id="live-next"></span>
+      </div>
+      <span class="live-time" id="live-time">0:00</span>
+    </header>
+    <div class="live-progress"><div id="live-progress-fill"></div></div>
+    <div class="live-body" id="live-body"></div>
+    <div class="rec-meter live-meter hidden" id="live-meter">
+      <div class="meter"><div class="meter-fill" id="live-meter-fill"></div></div>
+    </div>
+    <footer class="live-dock">
+      <button class="dock-side" id="live-prev" aria-label="Vorheriger Teil"><svg viewBox="0 0 24 24"><path d="M6 5v14"/><path d="M19 5 9 12l10 7z"/></svg></button>
+      <button class="dock-side" id="live-play" aria-label="Abspielen">
+        <svg class="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg>
+      </button>
+      <button class="rec-btn" id="live-rec" aria-label="Aufnehmen"><span class="rec-inner"></span></button>
+      <button class="dock-side" id="live-next-btn" aria-label="Nächster Teil"><svg viewBox="0 0 24 24"><path d="M18 5v14"/><path d="M5 5l10 7-10 7z"/></svg></button>
+      <button class="dock-side" id="live-size" aria-label="Schriftgrösse"><span class="aa">Aa</span></button>
+    </footer>
+  </section>
+
+  <!-- ============ SHEETS / TOAST ============ -->
+  <div id="sheet-backdrop" class="sheet-backdrop hidden"></div>
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-grabber"></div>
+    <div id="sheet-content"></div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <input type="file" id="take-input" accept="audio/*,.mp3,.wav,.m4a,.aac" hidden />
+  <input type="file" id="beat-input" accept="audio/*,.mp3,.wav,.m4a,.aac,.aif,.aiff,.flac,.ogg" hidden />
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
