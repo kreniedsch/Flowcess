@@ -317,7 +317,7 @@ async function unlockAudio() {
   startSilentAudio();
   ensureCtx();
   // iPhone: Stumm-Schalter soll Beat NICHT stumm machen
-  setAudioSessionType(S.recording ? "play-and-record" : "playback");
+  setAudioSessionType(S.recording || Rec.arming ? "play-and-record" : "playback");
   if (E.ctx.state !== "running") {
     try { await E.ctx.resume(); } catch {}
   }
@@ -748,18 +748,43 @@ async function startRecording() {
   }
   const btns = $$(".rec-btn");
   btns.forEach((b) => b.classList.add("armed"));
+  // Wichtig (iPhone): Audio-Session ZUERST auf Aufnahme stellen und das Mikrofon
+  // sofort anfragen. Steht die Session auf „playback“, verweigert Safari das Mikro.
+  Rec.arming = true;
+  let micErr = null;
+  const askMic = (c) => navigator.mediaDevices.getUserMedia({ audio: c });
   try {
     setAudioSessionType("play-and-record");
+    try {
+      Rec.stream = await askMic({ echoCancellation: false, noiseSuppression: false, autoGainControl: true });
+    } catch (e1) {
+      micErr = e1;
+      // 2. Versuch: Session auf „auto“ und einfachste Anfrage
+      try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {}
+      Rec.stream = await askMic(true);
+      micErr = null;
+      setAudioSessionType("play-and-record");
+    }
     await unlockAudio();
-    Rec.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
-    });
   } catch (err) {
+    Rec.arming = false;
     btns.forEach((b) => b.classList.remove("armed"));
     setAudioSessionType("playback");
     console.warn(err);
+    const e = micErr || err;
+    const name = (e && e.name) || "Fehler";
+    const inClaude = window.FLOWCESS_DEMO;
+    const why = inClaude
+      ? "In der Claude-Vorschau ist das Mikrofon immer gesperrt. Öffne kreniedsch.github.io/Flowcess in Safari."
+      : name === "NotAllowedError"
+        ? "Safari hat das Mikrofon blockiert. Tippe in Safari auf „Aa“ › Website-Einstellungen › Mikrofon › Erlauben und lade die Seite neu."
+        : name === "NotFoundError"
+          ? "Es wurde kein Mikrofon gefunden."
+          : name === "NotReadableError"
+            ? "Das Mikrofon wird gerade von einer anderen App benutzt (z. B. Anruf, Sprachmemo). Schliesse sie und versuch es nochmal."
+            : "Das Mikrofon konnte nicht gestartet werden.";
     openSheet((root) => {
-      sheetHeader(root, "Kein Mikrofon-Zugriff", "Erlaube Flowcess das Mikrofon: Einstellungen › Safari › Mikrofon. In der Claude-Vorschau ist das Mikrofon immer gesperrt – dort kannst du stattdessen eine Audiodatei als Take laden.");
+      sheetHeader(root, "Kein Mikrofon-Zugriff", `${why} (Code: ${name}${e && e.message ? " – " + e.message : ""})`);
       root.appendChild(el("div", { class: "sheet-group" }, [sheetItem("mic", "Audiodatei als Take laden", pickTakeFile)]));
       sheetCancel(root, "OK");
     });
@@ -780,6 +805,7 @@ async function startRecording() {
     Rec._silent = silent;
   } catch (err) { console.warn("Mic-Meter", err); }
 
+  Rec.arming = false;
   Rec.mime = Rec.pickMime();
   try {
     Rec.recorder = Rec.mime ? new MediaRecorder(Rec.stream, { mimeType: Rec.mime }) : new MediaRecorder(Rec.stream);
