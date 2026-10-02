@@ -952,6 +952,11 @@ function showSavedCard(take) {
     wave,
     el("div", { class: "saved-btns" }, [listen, starBtn, again]),
   ]);
+  if (!Settings.syncTested) {
+    const tip = el("button", { class: "saved-sync", text: "Nicht im Takt? → Sync-Test (einmalig, 7 Sek.)" });
+    tip.addEventListener("click", () => { hideSavedCard(); openSyncTestSheet(); });
+    card.appendChild(tip);
+  }
   $("#screen-song").appendChild(card);
   // Mini-Wellenform
   requestAnimationFrame(() => {
@@ -2371,7 +2376,10 @@ function drawWave(pos = getPos()) {
       }
     }
     g.fillStyle = dim ? "rgba(235,235,245,.4)" : "#fff";
-    g.fillText(t.name, Math.max(x0, 0) + 6, y + 3);
+    const dragging = W.tdrag && W.tdrag.id === t.id && W.tdrag.moved;
+    const shiftMs = dragging ? Math.round((t.offset - W.tdrag.off0) * 1000) : 0;
+    const lab = dragging ? `${t.name}  ${shiftMs > 0 ? "+" : ""}${shiftMs} ms` : sel ? `${t.name}  ⇆` : t.name;
+    g.fillText(lab, Math.max(x0, 0) + 6, y + 3);
     W.takeHits.push({ id: t.id, x0, x1, y0: y, y1: y + hh });
   }
 
@@ -2807,6 +2815,18 @@ function setupWaveGestures() {
       return;
     }
     if (S.recording) { W.drag = { tapOnly: true, x: e.clientX, y: e.clientY, moved: false }; return; }
+    // Ausgewählten Take anfassen = verschieben
+    if (S.selTakeId && !S.trimMode && !S.editSecId) {
+      const r = c.getBoundingClientRect();
+      const lx = e.clientX - r.left, ly = e.clientY - r.top;
+      const th = (W.takeHits || []).find((h) => h.id === S.selTakeId && lx >= h.x0 && lx <= h.x1 && ly >= h.y0 - 4 && ly <= h.y1 + 4);
+      const t = th && S.song.takes.find((x) => x.id === th.id);
+      if (t) {
+        W.tdrag = { id: t.id, cx: e.clientX, off0: t.offset, moved: false, wasPlaying: S.playing };
+        W.drag = null;
+        return;
+      }
+    }
     // Loop-Balken anfassen? (oben in der Zeitleiste)
     if (W.cycleHit && !S.trimMode && !S.editSecId) {
       const r = c.getBoundingClientRect();
@@ -2888,6 +2908,16 @@ function setupWaveGestures() {
     }
     if (W.hdrag) { moveHandle(e); return; }
     if (W.cdrag) { moveCycle(e); return; }
+    if (W.tdrag) {
+      const td = W.tdrag, t = S.song.takes.find((x) => x.id === td.id);
+      const dx = e.clientX - td.cx;
+      if (!td.moved && Math.abs(dx) > 6) { td.moved = true; haptic(8); if (S.playing) pause(); }
+      if (td.moved && t) {
+        t.offset = Math.round((td.off0 + dx / S.pps) * 1000) / 1000;
+        renderFrame(S.pos);
+      }
+      return;
+    }
     const dr = W.drag;
     if (!dr) return;
     const dx = e.clientX - dr.x;
@@ -2909,6 +2939,16 @@ function setupWaveGestures() {
     W.pointers.delete(e.pointerId);
     if (W.pinch) {
       if (W.pointers.size < 2) W.pinch = null;
+      return;
+    }
+    if (W.tdrag) {
+      const td = W.tdrag; W.tdrag = null;
+      if (!td.moved) { handleWaveTap(e); return; }
+      const t = S.song.takes.find((x) => x.id === td.id);
+      haptic(6);
+      saveSong(); renderTracks(); renderAll();
+      if (t) toast(`${t.name} verschoben: ${t.offset - td.off0 > 0 ? "+" : ""}${Math.round((t.offset - td.off0) * 1000)} ms`, 1400);
+      if (td.wasPlaying) play(S.pos);
       return;
     }
     if (W.cdrag) {
@@ -3773,7 +3813,7 @@ async function loadSongs() {
   S.songs = (await Store.allSongs()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-const APP_VERSION = "202610012314";
+const APP_VERSION = "202610020731";
 function renderLibrary() {
   const list = $("#lib-list");
   const q = ($("#lib-search").value || "").trim().toLowerCase();
@@ -5058,7 +5098,9 @@ function openTakeSheet(id) {
     root.appendChild(el("div", { class: "sheet-field" }, [
       el("div", { class: "sheet-field-label" }, [el("span", { text: "Timing (Take zu früh / zu spät)" }), nudgeLbl]),
       el("div", { class: "nudge" }, [nb("–50 ms", -0.05), nb("–10 ms", -0.01), nb("+10 ms", 0.01), nb("+50 ms", 0.05)]),
+      el("p", { class: "ai-tip", text: "Tipp: Take in der Waveform antippen und mit dem Finger ziehen." }),
     ]));
+    root.appendChild(el("div", { class: "sheet-group" }, [sheetItem("wave", "Alle Takes zu spät? Sync-Test machen", () => openSyncTestSheet())]));
 
     root.appendChild(el("div", { class: "sheet-group", style: { marginTop: "16px" } }, [
       sheetItem("pencil", "Umbenennen", async () => {
@@ -5325,6 +5367,137 @@ async function shareLyrics() {
   copyLyrics();
 }
 
+/* ---------- Sync-Test: misst die Verzögerung von Lautsprecher → Mikrofon ----------
+   Das iPhone spielt Klicks, nimmt sie über dieselbe Aufnahme-Kette auf und vergleicht.
+   Ergebnis = Korrektur für alle neuen Takes (Settings.latencyMs). */
+async function measureLatency(onStatus) {
+  ensureCtx();
+  if (S.playing) pause();
+  Rec.arming = true;
+  setAudioSessionType("play-and-record");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    await unlockAudio();
+  } finally { Rec.arming = false; }
+  const ctx = E.ctx;
+  if (ctx.state !== "running") { try { await ctx.resume(); } catch {} }
+  const mime = Rec.pickMime();
+  let rec;
+  try { rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); } catch { rec = new MediaRecorder(stream); }
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  const stopped = new Promise((ok) => (rec.onstop = ok));
+  // Kurzer, scharfer Klick
+  const sr = ctx.sampleRate;
+  const cb = ctx.createBuffer(1, Math.round(sr * 0.03), sr);
+  const cd = cb.getChannelData(0);
+  for (let i = 0; i < cd.length; i++) cd[i] = Math.sin(2 * Math.PI * 1800 * i / sr) * Math.exp(-i / (sr * 0.005)) * 0.95;
+  const out = ctx.createGain(); out.gain.value = 1; out.connect(ctx.destination);
+  // Unregelmässige Abstände → eindeutiges Muster
+  const gaps = [0.47, 0.63, 0.51, 0.72, 0.49, 0.66, 0.55, 0.6, 0.7];
+  // Auflösung wie bei der echten Aufnahme: Zeitpunkt direkt nach recorder.start()
+  try { rec.start(); } catch (e) { stream.getTracks().forEach((t) => t.stop()); throw e; }
+  const t0 = ctx.currentTime;
+  const latTrack = (() => { try { const st = stream.getAudioTracks()[0].getSettings(); return typeof st.latency === "number" ? st.latency : 0; } catch { return 0; } })();
+  const latAuto = (ctx.baseLatency || 0) + (ctx.outputLatency || 0) + latTrack;
+  const times = [t0 + 0.9];
+  for (const g of gaps) times.push(times[times.length - 1] + g);
+  for (const T of times) { const src = ctx.createBufferSource(); src.buffer = cb; src.connect(out); src.start(T); }
+  const total = times[times.length - 1] - t0 + 1.3;
+  const tStart = performance.now();
+  await new Promise((ok) => {
+    const tick = () => {
+      const el = (performance.now() - tStart) / 1000;
+      if (onStatus) onStatus(`Messe … ${Math.max(0, Math.ceil(total - el))} s – bitte leise sein`);
+      if (el >= total) ok(); else setTimeout(tick, 250);
+    };
+    tick();
+  });
+  try { rec.stop(); } catch {}
+  await stopped;
+  stream.getTracks().forEach((t) => t.stop());
+  try { out.disconnect(); } catch {}
+  setAudioSessionType("playback");
+  if (onStatus) onStatus("Werte aus …");
+  const buf = await decodeBlob(new Blob(chunks, { type: rec.mimeType || mime || "audio/mp4" }));
+  // Einsatz-Kurve (1 ms Raster)
+  const x = buf.getChannelData(0), bsr = buf.sampleRate, hop = Math.round(bsr / 1000);
+  const n = Math.floor(x.length / hop);
+  const env = new Float32Array(n);
+  for (let j = 0; j < n; j++) { let e = 0; for (let i = j * hop, z = i + hop; i < z; i++) e += x[i] * x[i]; env[j] = Math.sqrt(e / hop); }
+  const on = new Float32Array(n);
+  for (let j = 3; j < n; j++) on[j] = Math.max(0, env[j] - Math.max(env[j - 3], env[j - 2], env[j - 1]));
+  const rel = times.map((T) => T - t0);
+  let best = -1, bestD = 0;
+  const scores = [];
+  for (let dms = -200; dms <= 900; dms++) {
+    let sc = 0;
+    for (const r of rel) {
+      const j = Math.round(r * 1000 + dms);
+      if (j < 2 || j >= n - 2) continue;
+      sc += Math.max(on[j - 2], on[j - 1], on[j], on[j + 1], on[j + 2]);
+    }
+    scores.push(sc);
+    if (sc > best) { best = sc; bestD = dms; }
+  }
+  const sorted = scores.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)] || 1e-9;
+  const conf = best / (median + 1e-9);
+  if (!(best > 0) || conf < 4) { const e = new Error("weak"); e.conf = conf; throw e; }
+  const ms = Math.round(((bestD / 1000) - latAuto) * 1000 / 5) * 5;
+  return { ms: clamp(ms, -200, 600), totalMs: bestD, conf };
+}
+
+function openSyncTestSheet() {
+  openSheet((root) => {
+    sheetHeader(root, "Sync-Test", "Misst, wie viel Verzögerung dein iPhone beim Aufnehmen hat – danach sitzen neue Takes genau im Takt.");
+    root.appendChild(el("ol", { class: "ai-steps" }, [
+      el("li", { html: "<b>Kopfhörer raus</b> – der Ton muss aus dem Lautsprecher kommen." }),
+      el("li", { html: "Lautstärke <b>mittel bis laut</b>, Raum möglichst <b>leise</b>." }),
+      el("li", { html: "Tippe auf Start – du hörst 10 Klicks (ca. 7 Sekunden)." }),
+    ]));
+    const status = el("p", { class: "ai-status" });
+    root.appendChild(status);
+    const result = el("div", {});
+    root.appendChild(result);
+    const go = el("button", { class: "primary", text: "Test starten" });
+    const cancel = el("button", { text: "Schliessen" });
+    cancel.addEventListener("click", () => closeSheet(null));
+    go.addEventListener("click", async () => {
+      go.disabled = true; result.innerHTML = ""; status.className = "ai-status"; status.textContent = "Starte …";
+      const old = Settings.latencyMs || 0;
+      try {
+        const r = await measureLatency((t) => (status.textContent = t));
+        Settings.latencyMs = r.ms; Settings.syncTested = true; saveSettings();
+        status.className = "ai-status ok";
+        status.textContent = `Gemessen: ${r.totalMs} ms Verzögerung · Korrektur ${r.ms} ms gespeichert ✓`;
+        haptic(15);
+        const s = S.song;
+        const diff = (r.ms - old) / 1000;
+        if (s && s.takes.length && Math.abs(diff) >= 0.005) {
+          const fix = el("button", { class: "pill-btn", text: `Auch die ${s.takes.length} Takes in diesem Song korrigieren` });
+          fix.addEventListener("click", () => {
+            s.takes.forEach((t) => (t.offset = Math.round((t.offset - diff) * 1000) / 1000));
+            saveSong(); renderTracks(); renderAll();
+            fix.disabled = true; fix.textContent = "Takes korrigiert ✓"; haptic();
+          });
+          result.appendChild(el("div", { class: "sync-fix" }, [fix]));
+        }
+      } catch (e) {
+        status.className = "ai-status bad";
+        status.textContent = e && e.message === "weak"
+          ? "Klicks nicht sicher erkannt. Kopfhörer raus, lauter stellen und nochmal."
+          : `Test nicht möglich: ${(e && (e.name || e.message)) || e}`;
+        setAudioSessionType("playback");
+      }
+      go.disabled = false; go.textContent = "Nochmal testen";
+    });
+    root.appendChild(el("div", { class: "sheet-row" }, [cancel, go]));
+    root.appendChild(el("p", { class: "ai-tip", text: "Mit Bluetooth-Kopfhörern (z. B. AirPods) ist die Verzögerung anders – dann den Take von Hand verschieben: Take antippen und in der Waveform ziehen." }));
+  });
+}
+
 /* ---------- Einstellungen ---------- */
 function openSettingsSheet() {
   openSheet((root) => {
@@ -5335,14 +5508,15 @@ function openSettingsSheet() {
     ]));
     // Latenz
     const lbl = el("b", { text: `${Settings.latencyMs} ms` });
-    const sl = el("input", { type: "range", min: -200, max: 300, step: 5, value: Settings.latencyMs });
-    const setP = () => sl.style.setProperty("--p", `${((sl.value - -200) / 500) * 100}%`);
+    const sl = el("input", { type: "range", min: -200, max: 600, step: 5, value: Settings.latencyMs });
+    const setP = () => sl.style.setProperty("--p", `${((sl.value - -200) / 800) * 100}%`);
     setP();
     sl.addEventListener("input", () => { Settings.latencyMs = +sl.value; lbl.textContent = `${sl.value} ms`; setP(); saveSettings(); });
     root.appendChild(el("div", { class: "sheet-field" }, [
       el("div", { class: "sheet-field-label" }, [el("span", { text: "Aufnahme-Sync (wenn neue Takes zu spät sind: erhöhen)" }), lbl]),
       sl,
     ]));
+    root.appendChild(el("div", { class: "sheet-group" }, [sheetItem("wave", "Sync automatisch messen", () => openSyncTestSheet(), { note: "empfohlen" })]));
     const ml = el("b", { text: `${Math.round(Settings.metroVolume * 100)} %` });
     const ms = el("input", { type: "range", min: 0, max: 100, value: Math.round(Settings.metroVolume * 100) });
     ms.style.setProperty("--p", ms.value + "%");

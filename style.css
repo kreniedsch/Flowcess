@@ -879,3 +879,6 @@ input[type=range].center-zero::-webkit-slider-runnable-track {
 .loop-pick button { display: inline-flex; align-items: center; gap: 8px; padding: 11px 15px; border-radius: 14px; background: var(--glass-2); border: 1px solid var(--stroke); font-size: 15px; font-weight: 700; color: var(--label); }
 .loop-pick button i { width: 9px; height: 9px; border-radius: 50%; }
 .loop-pick button.sel { background: rgba(255,214,10,.16); border-color: #ffd60a; color: #ffe680; }
+
+.sync-fix { display: flex; justify-content: center; margin-top: 10px; }
+.saved-sync { border: 0; background: transparent; color: #ffd60a; font: inherit; font-size: 13px; font-weight: 700; padding: 2px 0 0; }
